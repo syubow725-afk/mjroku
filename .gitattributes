@@ -1,0 +1,4 @@
+# 改行は LF に統一する（Windows の自動 CRLF 変換を止める）
+* text=auto eol=lf
+*.png binary
+*.jpg binary

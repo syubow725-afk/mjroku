@@ -1,0 +1,11 @@
+# 公開リポジトリにはアプリのコードだけを置く（仕様書 2 章）。
+# 設計書類はメンバー名やグループ構成を含むため手元にのみ置く。
+docs/
+
+# clasp を使う場合の個人設定（スクリプト ID を含む）
+.clasp.json
+.clasprc.json
+
+node_modules/
+.DS_Store
+Thumbs.db

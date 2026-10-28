@@ -1,0 +1,90 @@
+/* 色はトークンで持ち、ライト／ダークを切り替える（テーマ設定は後の段階で足す） */
+:root {
+  --bg: #f4f1ea;
+  --surface: #ffffff;
+  --text: #1c1c1c;
+  --muted: #6b6b6b;
+  --accent: #14532d;
+  --accent-text: #ffffff;
+  --border: #ddd6c8;
+  --ok: #15803d;
+  --ng: #b91c1c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1a14;
+    --surface: #18261e;
+    --text: #ece8de;
+    --muted: #9aa59e;
+    --accent: #2f8f57;
+    --accent-text: #ffffff;
+    --border: #2a3a31;
+    --ok: #4ade80;
+    --ng: #f87171;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* 全画面起動時はノッチ・ホームバーに食い込まないよう safe-area 分の余白を取る */
+.appbar {
+  background: var(--accent);
+  color: var(--accent-text);
+  padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
+}
+.appbar h1 { margin: 0; font-size: 20px; }
+
+main {
+  padding: 16px 16px calc(env(safe-area-inset-bottom) + 16px);
+  display: grid;
+  gap: 12px;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+.card h2 { margin: 0 0 12px; font-size: 16px; }
+
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+
+.field { display: grid; gap: 6px; margin-bottom: 12px; }
+.field span { color: var(--muted); font-size: 14px; }
+
+/* iOS は 16px 未満の入力欄でフォーカス時に勝手に拡大するため 16px にする */
+input {
+  font-size: 16px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  width: 100%;
+}
+
+button {
+  font-size: 16px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+button:disabled { opacity: 0.5; }
+
+.result { margin: 12px 0 0; word-break: break-all; }
+.result.ok { color: var(--ok); }
+.result.ng { color: var(--ng); }
