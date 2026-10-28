@@ -2,8 +2,9 @@
 'use strict';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.0.1';
+const APP_VERSION = '0.0.2';
 const STORAGE_KEY_GAS_URL = 'mjroku.gasUrl';
+const STORAGE_KEY_PASSCODE = 'mjroku.passcode';
 
 // localStorage は private モード等で例外を投げることがあるため包む
 function loadSetting(key) {
@@ -23,6 +24,14 @@ async function pingGas(baseUrl) {
   const url = new URL(baseUrl);
   url.searchParams.set('action', 'ping');
   const res = await fetch(url, { method: 'GET' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// GAS の doPost に JSON を送る。body を文字列で渡すと Content-Type は text/plain になり、
+// ブラウザの事前確認（CORS preflight）が飛ばないので GAS でも受けられる
+async function postGas(baseUrl, body) {
+  const res = await fetch(baseUrl, { method: 'POST', body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -57,6 +66,38 @@ function init() {
       result.textContent = `接続できません：${err.message}`;
     } finally {
       button.disabled = false;
+    }
+  });
+
+  const passInput = document.getElementById('passcode');
+  const loadButton = document.getElementById('load');
+  const loadResult = document.getElementById('load-result');
+  passInput.value = loadSetting(STORAGE_KEY_PASSCODE);
+
+  loadButton.addEventListener('click', async () => {
+    const url = urlInput.value.trim();
+    const passcode = passInput.value.trim();
+    loadResult.className = 'result';
+    if (!url || !passcode) {
+      loadResult.textContent = 'URL と合言葉を入力してください';
+      return;
+    }
+    saveSetting(STORAGE_KEY_GAS_URL, url);
+    saveSetting(STORAGE_KEY_PASSCODE, passcode);
+    loadButton.disabled = true;
+    loadResult.textContent = '読み込み中…';
+    try {
+      const data = await postGas(url, { action: 'load', passcode });
+      if (!data.ok) throw new Error(data.error === 'bad_passcode' ? '合言葉が違います' : data.error);
+      const d = data.data;
+      loadResult.classList.add('ok');
+      loadResult.textContent =
+        `OK：「${data.group.name}」メンバー ${d.members.length} 人・対局 ${d.sessions.length} 件・ルール ${d.rules.length} 件`;
+    } catch (err) {
+      loadResult.classList.add('ng');
+      loadResult.textContent = `読み込めません：${err.message}`;
+    } finally {
+      loadButton.disabled = false;
     }
   });
 
