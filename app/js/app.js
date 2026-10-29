@@ -3,13 +3,13 @@ import { Store } from './store.js';
 import * as api from './api.js';
 import { getConfig, isConfigured } from './config.js';
 import { h } from './util.js';
-import { sessionsView, sessionFormView } from './views/sessions.js';
-import { sessionView, hanchanView, chipsView } from './views/session.js';
+import { sessionsView, sessionFormView, summaryView } from './views/sessions.js';
+import { sessionView, hanchanView, chipsView, shareView } from './views/session.js';
 import { membersView } from './views/members.js';
 import { settingsView } from './views/settings.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 
 const store = new Store({ api, getConfig });
 
@@ -34,6 +34,8 @@ const routes = [
   [/^#\/session\/([^/]+)\/edit$/, (m) => sessionFormView(ctx, m[1]), 'sessions'],
   [/^#\/session\/([^/]+)\/hanchan\/([^/]+)$/, (m) => hanchanView(ctx, m[1], m[2]), 'sessions'],
   [/^#\/session\/([^/]+)\/chips$/, (m) => chipsView(ctx, m[1]), 'sessions'],
+  [/^#\/session\/([^/]+)\/share$/, (m) => shareView(ctx, m[1]), 'sessions'],
+  [/^#\/summary$/, () => summaryView(ctx), 'sessions'],
   [/^#\/session\/([^/]+)$/, (m) => sessionView(ctx, m[1]), 'sessions'],
   [/^#\/members$/, () => membersView(ctx), 'members'],
   [/^#\/settings$/, () => settingsView(ctx), 'settings'],

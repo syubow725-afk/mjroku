@@ -1,8 +1,33 @@
-// 対局の一覧と、対局の作成・編集画面
-import { h, newId, todayStr, formatDate, readInt } from '../util.js';
+// 対局の一覧（履歴・絞り込み・集計）と、対局の作成・編集画面
+import { h, newId, todayStr, formatDate, formatMoney, signClass, readInt } from '../util.js';
+import { formatPt } from '../calc.js';
 import { getConfig, isConfigured } from '../config.js';
-import { buildSession, memberName, sessionChanges, ruleSnapshot } from '../model.js';
+import { buildSession, memberName, sessionChanges, ruleSnapshot, filterSessions, aggregate } from '../model.js';
 import { addMember } from './members.js';
+
+// 絞り込みの状態。画面を移っても残す（アプリを閉じたら全期間に戻る）
+//   period：'all'＝全期間、'2026' などの年、'custom'＝from〜to を指定
+const filter = { period: 'all', from: '', to: '', rule: '' };
+
+function effectiveFilter() {
+  if (filter.period === 'all') return { rule: filter.rule };
+  if (filter.period === 'custom') return { from: filter.from, to: filter.to, rule: filter.rule };
+  return { from: `${filter.period}-01-01`, to: `${filter.period}-12-31`, rule: filter.rule };
+}
+
+function filteredSessions(store) {
+  return filterSessions(store.list('sessions'), effectiveFilter())
+    .sort((a, b) => b.date.localeCompare(a.date) || String(b.created_at).localeCompare(String(a.created_at)));
+}
+
+function describeFilter() {
+  const parts = [];
+  if (filter.period === 'all') parts.push('全期間');
+  else if (filter.period === 'custom') parts.push(`${filter.from || '最初'} 〜 ${filter.to || '最後'}`);
+  else parts.push(`${filter.period}年`);
+  if (filter.rule) parts.push(filter.rule);
+  return parts.join('・');
+}
 
 export function sessionsView(ctx) {
   const { store } = ctx;
@@ -15,16 +40,40 @@ export function sessionsView(ctx) {
   }
 
   const t = store.tables();
-  const sessions = store.list('sessions')
-    .sort((a, b) => b.date.localeCompare(a.date) || String(b.created_at).localeCompare(String(a.created_at)));
+  const all = store.list('sessions');
+  const sessions = filteredSessions(store);
 
+  // 絞り込み：期間（全期間・年・指定）とルール（2 種類以上あるときだけ出す）
+  const years = [...new Set(all.map((s) => s.date.slice(0, 4)))].sort().reverse();
+  const change = (key) => (e) => { filter[key] = e.target.value; ctx.refresh(); };
+  const periodSelect = h('select', { onchange: change('period') },
+    h('option', { value: 'all', selected: filter.period === 'all' }, '全期間'),
+    years.map((y) => h('option', { value: y, selected: filter.period === y }, `${y}年`)),
+    h('option', { value: 'custom', selected: filter.period === 'custom' }, '期間を指定'));
+  const rules = [...new Set(all.map((s) => s.rule_name).filter(Boolean))];
+  const ruleSelect = rules.length > 1 || filter.rule
+    ? h('select', { onchange: change('rule') },
+        h('option', { value: '', selected: !filter.rule }, 'すべてのルール'),
+        rules.map((r) => h('option', { value: r, selected: filter.rule === r }, r)))
+    : null;
+  const range = filter.period === 'custom'
+    ? h('div', { class: 'range' },
+        h('input', { type: 'date', value: filter.from, onchange: change('from') }), '〜',
+        h('input', { type: 'date', value: filter.to, onchange: change('to') }))
+    : null;
+
+  // 対局カード：日付・タイトル・半荘数と、参加者ごとの収支
   const items = sessions.map((s) => {
     const model = buildSession(t, s.id);
-    const names = model.participants.map((p) => memberName(t, p.member_id)).join('・');
     return h('li', null, h('a', { class: 'list-item link', href: `#/session/${s.id}` },
       h('div', { class: 'list-main' },
-        h('strong', null, formatDate(s.date)), s.title ? `　${s.title}` : '',
-        h('div', { class: 'list-sub' }, `${names}　${model.hanchans.length} 半荘`))));
+        h('div', { class: 'card-head' },
+          h('strong', null, formatDate(s.date)),
+          h('span', { class: 'card-title' }, s.title || ''),
+          h('span', { class: 'muted small' }, `${model.hanchans.length} 半荘`)),
+        h('div', { class: 'balances' }, model.summary.map((r) => h('span', null,
+          h('span', { class: 'muted' }, memberName(t, r.memberId)), ' ',
+          h('span', { class: signClass(r.balance) }, formatMoney(r.balance))))))));
   });
 
   return {
@@ -32,7 +81,49 @@ export function sessionsView(ctx) {
     live: true,
     body: h('div', null,
       h('a', { class: 'button block', href: '#/sessions/new' }, '＋ 新しい対局'),
-      items.length ? h('ul', { class: 'list' }, items) : h('p', { class: 'empty' }, 'まだ対局がありません')),
+      all.length
+        ? h('div', { class: 'filter' },
+            h('div', { class: 'filter-row' }, periodSelect, ruleSelect),
+            range,
+            h('a', { class: 'button secondary block', href: '#/summary' }, `集計（${sessions.length} 対局）`))
+        : null,
+      items.length
+        ? h('ul', { class: 'list' }, items)
+        : h('p', { class: 'empty' }, all.length ? 'この条件の対局はありません' : 'まだ対局がありません')),
+  };
+}
+
+// 集計：絞り込んだ対局をメンバーごとに合算する（絞り込みなしなら全件集計）
+export function summaryView(ctx) {
+  const { store } = ctx;
+  const t = store.tables();
+  const sessions = filteredSessions(store);
+  const rows = aggregate(t, sessions.map((s) => s.id));
+
+  const num = (v, format = String) => h('td', { class: signClass(v) }, format(v));
+  const pct = (n, d) => (d ? `${Math.round((n / d) * 100)}%` : '—');
+  const table = h('div', { class: 'table-wrap' }, h('table', { class: 'score summary' },
+    h('thead', null, h('tr', null,
+      ['', '収支', '小計', 'pt', 'チップ', '日数', '半荘', '1着', '2着', '3着', '4着', 'トップ率', '平均'].map((c) => h('th', null, c)))),
+    h('tbody', null, rows.map((r) => h('tr', null,
+      h('th', null, memberName(t, r.memberId)),
+      num(r.balance, formatMoney),
+      num(r.subtotal, formatMoney),
+      num(r.pt10, formatPt),
+      num(r.chips, (v) => (v > 0 ? `+${v}` : String(v))),
+      h('td', null, r.sessions),
+      h('td', null, r.games),
+      r.rankCounts.map((n) => h('td', null, n)),
+      h('td', null, pct(r.rankCounts[0], r.games)),
+      h('td', null, r.avgRank == null ? '—' : r.avgRank.toFixed(2)))))));
+
+  return {
+    title: '集計',
+    back: '#/sessions',
+    live: true,
+    body: h('div', null,
+      h('p', { class: 'muted small' }, `${describeFilter()}・${sessions.length} 対局。収支はゲーム代込、小計はゲーム代別。`),
+      rows.length ? table : h('p', { class: 'empty' }, '対局がありません')),
   };
 }
 

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { overlay, addToOutbox, removeSent, countOutbox, indexRows, emptyTables } from '../app/js/store.js';
 import {
   toPt10, fromPt10, buildSession, sessionChanges, hanchanChanges, sessionHanchans,
+  filterSessions, aggregate,
 } from '../app/js/model.js';
 import { parsePt } from '../app/js/calc.js';
 
@@ -133,4 +134,55 @@ test('sessionHanchans／buildSession：論理削除した半荘・対局は数�
 
   const t2 = tablesFrom({ sessions: [{ ...session, deleted: true }] });
   assert.equal(buildSession(t2, 's_1'), null);
+});
+
+test('filterSessions：期間（両端を含む）とルールで絞り込む', () => {
+  const sessions = [
+    { id: '1', date: '2025-12-31', rule_name: 'いつものルール' },
+    { id: '2', date: '2026-01-01', rule_name: 'いつものルール' },
+    { id: '3', date: '2026-10-23', rule_name: 'Mリーグ' },
+    { id: '4', date: '2026-12-31', rule_name: 'いつものルール' },
+  ];
+  const ids = (f) => filterSessions(sessions, f).map((s) => s.id);
+  assert.deepEqual(ids({}), ['1', '2', '3', '4']);
+  assert.deepEqual(ids({ from: '2026-01-01', to: '2026-12-31' }), ['2', '3', '4']);
+  assert.deepEqual(ids({ to: '2026-01-01' }), ['1', '2']);
+  assert.deepEqual(ids({ rule: 'Mリーグ' }), ['3']);
+});
+
+test('aggregate：複数の対局をメンバーごとに合算する', () => {
+  const mk = (sid, date, fee, members, pts, chips) => {
+    const session = { id: sid, group_id: 'g', date, rate: 50, chip_rate: 200, game_fee: fee };
+    const changes = [sessionChanges({ session, memberIds: members })];
+    pts.forEach((row, i) => changes.push(hanchanChanges({
+      sessionId: sid, hanchanId: `${sid}_h${i}`, seq: i + 1,
+      entries: members.map((memberId, j) => ({ memberId, pt10: row[j] * 10 })).filter((e, j) => row[j] != null),
+    })));
+    changes.push({ participants: members.map((m, i) => ({ id: `${sid}:${m}`, chips: chips[i] })) });
+    return changes;
+  };
+  const t = tablesFrom(
+    ...mk('s_1', '2026-10-01', 4000, ['a', 'b', 'c', 'd'], [[30, 10, -10, -30], [-20, 40, -5, -15]], [2, 0, 0, -2]),
+    ...mk('s_2', '2026-10-08', 5000, ['a', 'b', 'c', 'd', 'e'], [[10, null, 20, -10, -20]], [0, 0, 0, 0, 0]),
+  );
+  const rows = aggregate(t, ['s_1', 's_2']);
+  const a = rows.find((r) => r.memberId === 'a');
+  assert.equal(a.sessions, 2);
+  assert.equal(a.games, 3);
+  assert.deepEqual(a.rankCounts, [1, 1, 0, 1]); // 1着、4着、2着
+  assert.equal(a.avgRank, (1 + 4 + 2) / 3);
+  assert.equal(a.pt10, 200);
+  assert.equal(a.chips, 2);
+  // 小計：s_1 は (+10)×50＋2×200＝900、s_2 は +10×50＝500 → 1,400。ゲーム代：1,000＋1,000
+  assert.equal(a.subtotal, 1400);
+  assert.equal(a.balance, -600);
+  const b = rows.find((r) => r.memberId === 'b');
+  assert.equal(b.games, 2, '抜け番の半荘は数えない');
+  const e = rows.find((r) => r.memberId === 'e');
+  assert.equal(e.sessions, 1);
+  // 収支の高い順
+  assert.deepEqual(rows.map((r) => r.balance), [...rows.map((r) => r.balance)].sort((x, y) => y - x));
+  // 全員の小計の合計は 0、収支の合計はゲーム代の総額だけマイナス
+  assert.equal(rows.reduce((n, r) => n + r.subtotal, 0), 0);
+  assert.equal(rows.reduce((n, r) => n + r.balance, 0), -9000);
 });

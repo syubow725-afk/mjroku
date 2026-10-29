@@ -1,7 +1,8 @@
-// 対局 1 日分の画面：入力表（半荘ごとの pt と精算）、半荘の入力、チップ・ゲーム代の入力
+// 対局 1 日分の画面：入力表（半荘ごとの pt と精算）、半荘の入力、チップ・ゲーム代の入力、画像で共有
 import { h, newId, formatDate, formatMoney, signClass, readInt, toggleSign } from '../util.js';
 import { parsePt, formatPt, fillMissing, sum, allocateFees } from '../calc.js';
 import { buildSession, memberName, toPt10, hanchanChanges } from '../model.js';
+import { shareTable, drawTable } from '../share.js';
 
 // ---------------------------------------------------------------------------
 // 入力表
@@ -62,6 +63,9 @@ export function sessionView(ctx, sessionId) {
       h('div', { class: 'button-row' },
         h('a', { class: 'button', href: `#/session/${sessionId}/hanchan/new` }, '＋ 半荘'),
         h('a', { class: 'button secondary', href: `#/session/${sessionId}/chips` }, 'チップ・ゲーム代')),
+      hanchans.length
+        ? h('a', { class: 'button secondary block', href: `#/session/${sessionId}/share` }, '画像で共有')
+        : null,
       h('p', { class: 'muted small' }, '半荘の行をタップすると直せます。'),
     ),
   };
@@ -310,4 +314,42 @@ export function chipsView(ctx, sessionId) {
   update();
 
   return { title: 'チップ・ゲーム代', back: `#/session/${sessionId}`, body };
+}
+
+// ---------------------------------------------------------------------------
+// 画像で共有
+// ---------------------------------------------------------------------------
+
+// 画像を先に作ってプレビューを出し、ボタンで共有シートを開く。
+// iPhone の共有シートはタップの直後に呼ばないと拒否されるため、画像の生成はボタンを押す前に済ませておく
+export function shareView(ctx, sessionId) {
+  const t = ctx.store.tables();
+  const model = buildSession(t, sessionId);
+  if (!model) return ctx.notFound();
+  const names = model.participants.map((p) => memberName(t, p.member_id));
+  const table = shareTable(model, names);
+
+  const img = h('img', { class: 'share-image', alt: '成績表' });
+  const button = h('button', { type: 'button', class: 'block', disabled: true }, '共有（LINE など）');
+  const note = h('p', { class: 'muted small' }, '共有が使えないときは、画像を長押しして保存してください。');
+  let file = null;
+
+  drawTable(table).toBlob((blob) => {
+    if (!blob) return;
+    file = new File([blob], `mjroku_${model.session.date}.png`, { type: 'image/png' });
+    img.src = URL.createObjectURL(blob);
+    button.disabled = !navigator.canShare?.({ files: [file] });
+  }, 'image/png');
+
+  button.addEventListener('click', () => {
+    navigator.share({ files: [file], title: table.title }).catch((err) => {
+      if (err.name !== 'AbortError') alert(`共有できませんでした：${err.message}`);
+    });
+  });
+
+  return {
+    title: '画像で共有',
+    back: `#/session/${sessionId}`,
+    body: h('div', null, img, button, note),
+  };
 }

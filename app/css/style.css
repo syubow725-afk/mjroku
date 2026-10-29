@@ -256,3 +256,20 @@ table.score td.small { font-size: 12px; }
 .total-line { margin: 10px 0 0; font-size: 14px; }
 .total-line.ok { color: var(--ok); }
 .total-line.ng { color: var(--ng); }
+
+/* ---- 履歴：絞り込みと対局カード ---- */
+.filter { display: grid; gap: 8px; }
+.filter-row { display: flex; gap: 8px; }
+.filter-row > select { flex: 1; }
+.range { display: flex; align-items: center; gap: 6px; }
+.card-head { display: flex; align-items: baseline; gap: 8px; }
+.card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.balances { display: flex; flex-wrap: wrap; gap: 2px 14px; margin-top: 6px; font-size: 14px; font-variant-numeric: tabular-nums; }
+
+/* ---- 集計表：先頭列は名前 ---- */
+table.summary th:first-child { text-align: left; color: var(--text); font-weight: bold; font-size: 14px; width: auto; max-width: 6em; overflow: hidden; text-overflow: ellipsis; }
+table.summary thead th { font-size: 12px; color: var(--muted); }
+table.summary td { min-width: 3em; font-size: 15px; }
+
+/* ---- 画像で共有 ---- */
+.share-image { width: 100%; border: 1px solid var(--border); border-radius: 8px; background: #fff; min-height: 120px; }

@@ -98,6 +98,41 @@ export function hanchanChanges({ sessionId, hanchanId, seq, entries, existingRes
   };
 }
 
+// 対局の絞り込み。from／to は "2026-01-01" 形式で両端を含む。空なら制限なし。rule は rule_name
+export function filterSessions(sessions, { from = '', to = '', rule = '' } = {}) {
+  return sessions.filter((s) => (!from || s.date >= from) && (!to || s.date <= to) && (!rule || s.rule_name === rule));
+}
+
+// 複数の対局をメンバーごとに合算する（本家の「全件集計」「合算集計」に相当）。
+// 戻り値は収支（ゲーム代込）の高い順。avgRank は半荘がなければ null
+export function aggregate(tables, sessionIds) {
+  const byMember = new Map();
+  for (const id of sessionIds) {
+    const model = buildSession(tables, id);
+    if (!model) continue;
+    for (const s of model.summary) {
+      const a = byMember.get(s.memberId) || {
+        memberId: s.memberId, sessions: 0, games: 0, rankCounts: [0, 0, 0, 0],
+        pt10: 0, chips: 0, subtotal: 0, balance: 0,
+      };
+      a.sessions += 1;
+      a.games += s.games;
+      s.rankCounts.forEach((n, i) => { a.rankCounts[i] += n; });
+      a.pt10 += s.pt10;
+      a.chips += s.chips;
+      a.subtotal += s.subtotal;
+      a.balance += s.balance;
+      byMember.set(s.memberId, a);
+    }
+  }
+  return [...byMember.values()]
+    .map((a) => ({
+      ...a,
+      avgRank: a.games ? a.rankCounts.reduce((acc, n, i) => acc + n * (i + 1), 0) / a.games : null,
+    }))
+    .sort((x, y) => y.balance - x.balance);
+}
+
 // ルールプリセットの行から、対局に保存するスナップショット（JSON 文字列）を作る
 export function ruleSnapshot(rule) {
   if (!rule) return '';
