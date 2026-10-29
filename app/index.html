@@ -17,41 +17,19 @@
 </head>
 <body>
   <header class="appbar">
-    <h1>麻雀録</h1>
+    <button id="back" class="appbar-back" type="button" hidden>‹ 戻る</button>
+    <h1 id="title">麻雀録</h1>
+    <span id="sync-status" class="sync"></span>
   </header>
 
-  <main>
-    <section class="card">
-      <h2>起動確認</h2>
-      <dl class="kv">
-        <dt>表示モード</dt><dd id="display-mode">—</dd>
-        <dt>バージョン</dt><dd id="version">—</dd>
-        <dt>オフライン対応</dt><dd id="sw-status">—</dd>
-      </dl>
-    </section>
+  <main id="main"></main>
 
-    <section class="card">
-      <h2>GAS 接続テスト</h2>
-      <label class="field">
-        <span>ウェブアプリ URL</span>
-        <input id="gas-url" type="url" inputmode="url" autocomplete="off"
-               placeholder="https://script.google.com/macros/s/…/exec">
-      </label>
-      <button id="ping" type="button">保存して接続テスト</button>
-      <p id="ping-result" class="result"></p>
-    </section>
+  <nav class="tabbar">
+    <a href="#/sessions" data-tab="sessions">対局</a>
+    <a href="#/members" data-tab="members">メンバー</a>
+    <a href="#/settings" data-tab="settings">設定</a>
+  </nav>
 
-    <section class="card">
-      <h2>合言葉の確認</h2>
-      <label class="field">
-        <span>合言葉</span>
-        <input id="passcode" type="password" autocomplete="off">
-      </label>
-      <button id="load" type="button">保存して読み込みテスト</button>
-      <p id="load-result" class="result"></p>
-    </section>
-  </main>
-
-  <script src="js/app.js"></script>
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>

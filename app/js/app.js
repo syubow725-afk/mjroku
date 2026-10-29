@@ -1,121 +1,114 @@
-// 麻雀録 段階0：起動確認と GAS 接続テストだけを行う最小構成
-'use strict';
+// 麻雀録 アプリの入口：画面の切り替え（#/… のハッシュで決める）と同期のきっかけづくり
+import { Store } from './store.js';
+import * as api from './api.js';
+import { getConfig, isConfigured } from './config.js';
+import { h } from './util.js';
+import { sessionsView, sessionFormView } from './views/sessions.js';
+import { sessionView, hanchanView, chipsView } from './views/session.js';
+import { membersView } from './views/members.js';
+import { settingsView } from './views/settings.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.0.2';
-const STORAGE_KEY_GAS_URL = 'mjroku.gasUrl';
-const STORAGE_KEY_PASSCODE = 'mjroku.passcode';
+const APP_VERSION = '0.1.0';
 
-// localStorage は private モード等で例外を投げることがあるため包む
-function loadSetting(key) {
-  try { return localStorage.getItem(key) || ''; } catch { return ''; }
-}
-function saveSetting(key, value) {
-  try { localStorage.setItem(key, value); } catch { /* 保存できなくても接続テストは続ける */ }
-}
+const store = new Store({ api, getConfig });
 
-// ホーム画面から起動したか（iOS は navigator.standalone、他は display-mode で判定）
-function isStandalone() {
-  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
-}
+const ctx = {
+  store,
+  version: APP_VERSION,
+  go: (hash) => { location.hash = hash; },
+  // フォームの保存後など、戻るでフォームに戻らないよう履歴を置き換える
+  replace: (hash) => { location.replace(hash); },
+  refresh: () => render(),
+  notFound: () => ({
+    title: '見つかりません',
+    back: '#/sessions',
+    live: true,
+    body: h('p', { class: 'empty' }, '削除されたか、まだ同期されていません。'),
+  }),
+};
 
-// GAS の doGet に action=ping を投げ、{ ok: true, ... } が返れば疎通成功
-async function pingGas(baseUrl) {
-  const url = new URL(baseUrl);
-  url.searchParams.set('action', 'ping');
-  const res = await fetch(url, { method: 'GET' });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
+// [ハッシュの形, 画面, 下のタブ]
+const routes = [
+  [/^#\/sessions\/new$/, () => sessionFormView(ctx, null), 'sessions'],
+  [/^#\/session\/([^/]+)\/edit$/, (m) => sessionFormView(ctx, m[1]), 'sessions'],
+  [/^#\/session\/([^/]+)\/hanchan\/([^/]+)$/, (m) => hanchanView(ctx, m[1], m[2]), 'sessions'],
+  [/^#\/session\/([^/]+)\/chips$/, (m) => chipsView(ctx, m[1]), 'sessions'],
+  [/^#\/session\/([^/]+)$/, (m) => sessionView(ctx, m[1]), 'sessions'],
+  [/^#\/members$/, () => membersView(ctx), 'members'],
+  [/^#\/settings$/, () => settingsView(ctx), 'settings'],
+  [/^/, () => sessionsView(ctx), 'sessions'],
+];
 
-// GAS の doPost に JSON を送る。body を文字列で渡すと Content-Type は text/plain になり、
-// ブラウザの事前確認（CORS preflight）が飛ばないので GAS でも受けられる
-async function postGas(baseUrl, body) {
-  const res = await fetch(baseUrl, { method: 'POST', body: JSON.stringify(body) });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
+const main = document.getElementById('main');
+const titleEl = document.getElementById('title');
+const backEl = document.getElementById('back');
+const syncEl = document.getElementById('sync-status');
 
-function init() {
-  document.getElementById('version').textContent = APP_VERSION;
-  document.getElementById('display-mode').textContent =
-    isStandalone() ? 'ホーム画面から起動' : 'ブラウザで表示';
+// 画面は { title, body, back?, live?, update? } を返す。
+//   live   … データが変わったら作り直して良い画面（入力欄のない一覧など）
+//   update … 作り直さずに一部だけ最新にする関数（入力中の内容を消さないため）
+let current = null;
 
-  const urlInput = document.getElementById('gas-url');
-  const button = document.getElementById('ping');
-  const result = document.getElementById('ping-result');
-  urlInput.value = loadSetting(STORAGE_KEY_GAS_URL);
-
-  button.addEventListener('click', async () => {
-    const value = urlInput.value.trim();
-    result.className = 'result';
-    if (!value) {
-      result.textContent = 'URL を入力してください';
-      return;
-    }
-    saveSetting(STORAGE_KEY_GAS_URL, value);
-    button.disabled = true;
-    result.textContent = '接続中…';
-    try {
-      const data = await pingGas(value);
-      if (!data.ok) throw new Error(data.error || '応答が不正です');
-      result.classList.add('ok');
-      result.textContent = `接続 OK：「${data.spreadsheet}」（${data.time}）`;
-    } catch (err) {
-      result.classList.add('ng');
-      result.textContent = `接続できません：${err.message}`;
-    } finally {
-      button.disabled = false;
-    }
-  });
-
-  const passInput = document.getElementById('passcode');
-  const loadButton = document.getElementById('load');
-  const loadResult = document.getElementById('load-result');
-  passInput.value = loadSetting(STORAGE_KEY_PASSCODE);
-
-  loadButton.addEventListener('click', async () => {
-    const url = urlInput.value.trim();
-    const passcode = passInput.value.trim();
-    loadResult.className = 'result';
-    if (!url || !passcode) {
-      loadResult.textContent = 'URL と合言葉を入力してください';
-      return;
-    }
-    saveSetting(STORAGE_KEY_GAS_URL, url);
-    saveSetting(STORAGE_KEY_PASSCODE, passcode);
-    loadButton.disabled = true;
-    loadResult.textContent = '読み込み中…';
-    try {
-      const data = await postGas(url, { action: 'load', passcode });
-      if (!data.ok) throw new Error(data.error === 'bad_passcode' ? '合言葉が違います' : data.error);
-      const d = data.data;
-      loadResult.classList.add('ok');
-      loadResult.textContent =
-        `OK：「${data.group.name}」メンバー ${d.members.length} 人・対局 ${d.sessions.length} 件・ルール ${d.rules.length} 件`;
-    } catch (err) {
-      loadResult.classList.add('ng');
-      loadResult.textContent = `読み込めません：${err.message}`;
-    } finally {
-      loadButton.disabled = false;
-    }
-  });
-
-  registerServiceWorker();
-}
-
-async function registerServiceWorker() {
-  const status = document.getElementById('sw-status');
-  if (!('serviceWorker' in navigator)) {
-    status.textContent = '非対応の端末';
-    return;
+// onlyIfChanged：作り直した結果が今の画面と同じなら差し替えない（タップ中のボタンを消さないため）
+function render({ onlyIfChanged = false } = {}) {
+  const hash = location.hash || '#/sessions';
+  for (const [pattern, view, tab] of routes) {
+    const m = hash.match(pattern);
+    if (!m) continue;
+    const next = view(m);
+    if (onlyIfChanged && current && next.body.outerHTML === current.body.outerHTML) break;
+    current = next;
+    main.replaceChildren(current.body);
+    titleEl.textContent = current.title;
+    backEl.hidden = !current.back;
+    backEl.onclick = () => ctx.go(current.back);
+    for (const a of document.querySelectorAll('.tabbar a')) a.classList.toggle('active', a.dataset.tab === tab);
+    break;
   }
-  try {
-    await navigator.serviceWorker.register('sw.js');
-    status.textContent = '有効';
-  } catch (err) {
-    status.textContent = `登録失敗：${err.message}`;
-  }
+  renderSyncStatus();
 }
 
-init();
+function renderSyncStatus() {
+  const pending = store.pendingCount();
+  // 帯が緑なので、正常時は色を付けず、問題があるときだけ赤くする
+  let text = '同期済';
+  let cls = '';
+  if (!isConfigured()) [text, cls] = ['未設定', 'ng'];
+  else if (store.syncing) [text, cls] = ['同期中…', ''];
+  else if (pending > 0) [text, cls] = [`送信待ち ${pending}`, store.error ? 'ng' : ''];
+  else if (store.error) [text, cls] = ['同期エラー', 'ng'];
+  syncEl.textContent = text;
+  syncEl.className = `sync ${cls}`;
+}
+
+store.subscribe((kind) => {
+  if (kind === 'data' && current?.live) {
+    render({ onlyIfChanged: true });
+  } else {
+    current?.update?.();
+    renderSyncStatus();
+  }
+});
+
+window.addEventListener('hashchange', () => {
+  render();
+  window.scrollTo(0, 0);
+});
+
+// 同期のきっかけ：起動時、電波の復帰、アプリに戻ったとき、送信待ちがある間の定期再送
+window.addEventListener('online', () => store.sync());
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') store.sync();
+});
+setInterval(() => {
+  if (store.pendingCount() > 0) store.sync();
+}, 60000);
+
+if (!isConfigured() && !location.hash) location.hash = '#/settings';
+render();
+store.sync();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => { /* 登録できなくてもオンラインでは動く */ });
+}
