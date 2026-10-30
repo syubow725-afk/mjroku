@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { overlay, addToOutbox, removeSent, countOutbox, indexRows, emptyTables } from '../app/js/store.js';
 import {
   toPt10, fromPt10, buildSession, sessionChanges, hanchanChanges, sessionHanchans,
-  filterSessions, aggregate,
+  filterSessions, aggregate, scoreEntries, recomputeScoreResults, ruleSnapshot, sessionRule, umaToString,
 } from '../app/js/model.js';
 import { parsePt } from '../app/js/calc.js';
 
@@ -213,4 +213,82 @@ test('aggregate：複数の対局をメンバーごとに合算する', () => {
   // 全員の小計の合計は 0、収支の合計はゲーム代の総額だけマイナス
   assert.equal(rows.reduce((n, r) => n + r.subtotal, 0), 0);
   assert.equal(rows.reduce((n, r) => n + r.balance, 0), -9000);
+});
+
+const preset = {
+  id: 'r_standard', name: 'いつものルール', players: 4, start_points: 25000, return_points: 30000,
+  uma: '20,10,-10,-20', uma_oka: true, rounding: 'none', tie_break: 'seat',
+};
+
+test('ruleSnapshot／sessionRule：対局作成画面の切り替えを保存し、計算用に読み戻す', () => {
+  const plain = sessionRule({ rule_snapshot: ruleSnapshot(preset) });
+  assert.deepEqual(plain, { start: 25000, ret: 30000, uma: [200, 100, -100, -200], umaOka: true, rounding: 'none' });
+
+  const snap = ruleSnapshot(preset, { rounding: 'round4', uma: [300, 100, -100, -300] });
+  assert.equal(JSON.parse(snap).uma, '30,10,-10,-30');
+  assert.equal(JSON.parse(snap).name, 'いつものルール');
+  assert.deepEqual(sessionRule({ rule_snapshot: snap }).uma, [300, 100, -100, -300]);
+  assert.equal(sessionRule({ rule_snapshot: snap }).rounding, 'round4');
+
+  const off = sessionRule({ rule_snapshot: ruleSnapshot(preset, { umaOka: false }) });
+  assert.equal(off.umaOka, false);
+  assert.deepEqual(off.uma, [0, 0, 0, 0]);
+
+  // スナップショットがない・壊れているときは標準ルール（四捨五入）
+  const standardRule = { ...plain, rounding: 'round4' };
+  assert.deepEqual(sessionRule({ rule_snapshot: '' }), standardRule);
+  assert.deepEqual(sessionRule({ rule_snapshot: '{壊れ' }), standardRule);
+  assert.equal(umaToString([100, 50, -50, -100]), '10,5,-5,-10');
+});
+
+test('scoreEntries：列順のまま渡しても席順で計算する（仕様書 6.4 例 1）', () => {
+  const rule = sessionRule({ rule_snapshot: ruleSnapshot(preset) });
+  // 列順は A, B, C, D。席は D が起家、A が南家…
+  const entries = scoreEntries([
+    { memberId: 'a', seat: 1, score: 45000 },
+    { memberId: 'b', seat: 2, score: 30000 },
+    { memberId: 'c', seat: 3, score: 21600 },
+    { memberId: 'd', seat: 0, score: 3400 },
+  ], rule);
+  assert.deepEqual(entries.map((e) => [e.memberId, e.pt10, e.rank, e.seat, e.rawScore]), [
+    ['a', 550, 1, 1, 45000], ['b', 100, 2, 2, 30000], ['c', -184, 3, 3, 21600], ['d', -466, 4, 0, 3400],
+  ]);
+});
+
+test('scoreEntries：同点は上家（席の番号が小さい人）が上位', () => {
+  const rule = sessionRule({ rule_snapshot: ruleSnapshot(preset) });
+  const entries = scoreEntries([
+    { memberId: 'a', seat: 3, score: 30000 },
+    { memberId: 'b', seat: 1, score: 30000 },
+    { memberId: 'c', seat: 0, score: 20000 },
+    { memberId: 'd', seat: 2, score: 20000 },
+  ], rule);
+  assert.deepEqual(entries.map((e) => e.rank), [2, 1, 3, 4]);
+});
+
+test('recomputeScoreResults：ルールを変えたら素点の半荘だけ計算し直す', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const session = { id: 's_1', group_id: 'g', date: '2026-11-01', rate: 50, chip_rate: 200, game_fee: 0, rule_snapshot: ruleSnapshot(preset) };
+  const rule = sessionRule(session);
+  const scoreHanchan = hanchanChanges({
+    sessionId: 's_1', hanchanId: 'h_1', seq: 1, inputMode: 'score',
+    entries: scoreEntries(ids.map((memberId, i) => ({ memberId, seat: i, score: [45000, 30000, 21600, 3400][i] })), rule),
+  });
+  assert.equal(scoreHanchan.hanchans[0].input_mode, 'score');
+  assert.equal(scoreHanchan.results[2].pt, -18.4);
+  assert.equal(scoreHanchan.results[2].raw_score, 21600);
+  const ptHanchan = hanchanChanges({
+    sessionId: 's_1', hanchanId: 'h_2', seq: 2,
+    entries: ids.map((memberId, i) => ({ memberId, pt10: [100, 0, 0, -100][i] })),
+  });
+  const t = tablesFrom(sessionChanges({ session, memberIds: ids }), scoreHanchan, ptHanchan);
+
+  // 同じルールなら変更なし
+  assert.deepEqual(recomputeScoreResults(t, 's_1', rule), []);
+  // 五捨六入に変えると、素点の半荘だけ例 2 の値になる
+  const changes = recomputeScoreResults(t, 's_1', { ...rule, rounding: 'round5' });
+  assert.deepEqual(changes, [
+    { id: 'h_1:c', pt: -18, rank: 3 },
+    { id: 'h_1:d', pt: -47, rank: 4 },
+  ]);
 });

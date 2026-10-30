@@ -2,7 +2,7 @@
 //
 // シートの pt は人が読める値（55、-26.6）、計算は ×10 の整数（pt10）で行う（docs/02_データ設計.md 2.3）
 
-import { rankByPt, summarizeSession } from './calc.js';
+import { rankByPt, summarizeSession, scoreToPt, normalizeRule, formatPt } from './calc.js';
 
 export function toPt10(pt) {
   return pt == null || pt === '' ? null : Math.round(Number(pt) * 10);
@@ -76,14 +76,16 @@ export function sessionChanges({ session, memberIds, existing = [] }) {
 // pt 入力の半荘 1 回分で書く行を作る。
 //   entries … 対局した人（入力表の列順）[{ memberId, pt10 }]。着順は pt の高い順、同 pt は列順が前の人が上
 //   existingResults … 編集時の既存の成績行。今回対局しなかった人の行は論理削除する
-export function hanchanChanges({ sessionId, hanchanId, seq, entries, existingResults = [] }) {
-  const ranks = rankByPt(entries.map((e) => e.pt10));
+//   inputMode … 'pt'（pt 直接入力）／'score'（素点入力。entries に seat・rawScore・rank も入れる）
+export function hanchanChanges({ sessionId, hanchanId, seq, entries, existingResults = [], inputMode = 'pt' }) {
+  // 素点入力では席順で決めた着順をそのまま使う。pt 入力では pt から決める
+  const ranks = entries.every((e) => e.rank != null) ? entries.map((e) => e.rank) : rankByPt(entries.map((e) => e.pt10));
   const results = entries.map((e, i) => ({
     id: `${hanchanId}:${e.memberId}`,
     hanchan_id: hanchanId,
     member_id: e.memberId,
-    seat: null,
-    raw_score: null,
+    seat: e.seat ?? null,
+    raw_score: e.rawScore ?? null,
     pt: fromPt10(e.pt10),
     rank: ranks[i],
     deleted: false,
@@ -93,9 +95,36 @@ export function hanchanChanges({ sessionId, hanchanId, seq, entries, existingRes
     if (!playing.has(r.member_id) && !r.deleted) results.push({ id: r.id, deleted: true });
   }
   return {
-    hanchans: [{ id: hanchanId, session_id: sessionId, seq, input_mode: 'pt', deleted: false }],
+    hanchans: [{ id: hanchanId, session_id: sessionId, seq, input_mode: inputMode, deleted: false }],
     results,
   };
+}
+
+// 素点入力の 4 人分から、pt と着順を付けた entries（hanchanChanges に渡す形）を作る。
+//   players … [{ memberId, seat（0＝起家〜3）, score（点） }]（入力表の列順のままで良い）
+// 計算は席順に並べて calc.scoreToPt で行う（同点は上家優先のため席順が要る）
+export function scoreEntries(players, rule) {
+  const bySeat = [...players].sort((a, b) => a.seat - b.seat);
+  const { ranks, pts10 } = scoreToPt(bySeat.map((p) => p.score), rule);
+  const computed = new Map(bySeat.map((p, i) => [p.memberId, { pt10: pts10[i], rank: ranks[i] }]));
+  return players.map((p) => ({ memberId: p.memberId, seat: p.seat, rawScore: p.score, ...computed.get(p.memberId) }));
+}
+
+// 対局のルールを変えたとき、素点で入れた半荘の pt・着順を新しいルールで計算し直す。
+// 変わる成績行だけを返す（pt 入力の半荘はそのまま）
+export function recomputeScoreResults(tables, sessionId, rule) {
+  const changes = [];
+  for (const { hanchan, results } of sessionHanchans(tables, sessionId)) {
+    if (hanchan.input_mode !== 'score') continue;
+    const rows = Object.values(results);
+    if (rows.length !== 4 || rows.some((r) => r.raw_score == null || r.seat == null)) continue;
+    const entries = scoreEntries(rows.map((r) => ({ memberId: r.member_id, seat: r.seat, score: r.raw_score })), rule);
+    entries.forEach((e, i) => {
+      const pt = fromPt10(e.pt10);
+      if (rows[i].pt !== pt || rows[i].rank !== e.rank) changes.push({ id: rows[i].id, pt, rank: e.rank });
+    });
+  }
+  return changes;
 }
 
 // 対局の絞り込み。from／to は "2026-01-01" 形式で両端を含む。空なら制限なし。rule は rule_name
@@ -134,8 +163,36 @@ export function aggregate(tables, sessionIds) {
 }
 
 // ルールプリセットの行から、対局に保存するスナップショット（JSON 文字列）を作る
-export function ruleSnapshot(rule) {
-  if (!rule) return '';
-  const { id, name, players, start_points, return_points, uma, rounding, tie_break } = rule;
-  return JSON.stringify({ id, name, players, start_points, return_points, uma, rounding, tie_break });
+//   settings … 対局作成画面で切り替えた { umaOka, uma（pt10 の配列）, rounding }。省いた項目はプリセットのまま
+export function ruleSnapshot(preset, settings = {}) {
+  if (!preset) return '';
+  const rule = { ...normalizeRule(preset), ...settings };
+  return JSON.stringify({
+    id: preset.id,
+    name: preset.name,
+    players: preset.players ?? 4,
+    start_points: rule.start,
+    return_points: rule.ret,
+    uma: umaToString(rule.uma),
+    uma_oka: rule.umaOka,
+    rounding: rule.rounding,
+    tie_break: preset.tie_break || 'seat',
+  });
+}
+
+// pt10 のウマ配列をシートの形（"20,10,-10,-20"）にする
+export function umaToString(uma) {
+  return uma.map((v) => formatPt(v).replace('+', '')).join(',');
+}
+
+// 標準ルール（スナップショットがない・欠けているときの補い）
+const STANDARD_RULE = { start_points: 25000, return_points: 30000, uma: '20,10,-10,-20', uma_oka: true, rounding: 'round4' };
+
+// 対局に保存したルール（rule_snapshot）を計算用の形にする
+export function sessionRule(session) {
+  let snapshot = {};
+  try {
+    snapshot = JSON.parse(session?.rule_snapshot || '{}') || {};
+  } catch { /* 壊れていたら標準ルール */ }
+  return normalizeRule({ ...STANDARD_RULE, ...snapshot });
 }

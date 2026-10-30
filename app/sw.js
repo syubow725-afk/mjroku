@@ -3,7 +3,7 @@
 'use strict';
 
 // app.js の APP_VERSION と揃えて上げる。上げると古いキャッシュは activate 時に消える
-const CACHE_VERSION = '0.2.1';
+const CACHE_VERSION = '0.3.0';
 const CACHE_NAME = `mjroku-${CACHE_VERSION}`;
 
 // js を足したらここにも足す
@@ -21,6 +21,7 @@ const APP_SHELL = [
   'js/store.js',
   'js/util.js',
   'js/views/members.js',
+  'js/views/rule-settings.js',
   'js/views/session.js',
   'js/views/sessions.js',
   'js/views/settings.js',

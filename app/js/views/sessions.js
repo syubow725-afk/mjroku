@@ -2,8 +2,17 @@
 import { h, setChildren, newId, todayStr, formatDate, formatMoney, signClass, readInt } from '../util.js';
 import { formatPt } from '../calc.js';
 import { getConfig, isConfigured } from '../config.js';
-import { buildSession, memberName, sessionChanges, ruleSnapshot, filterSessions, aggregate } from '../model.js';
+import {
+  buildSession, memberName, sessionChanges, ruleSnapshot, filterSessions, aggregate, sessionRule, recomputeScoreResults,
+} from '../model.js';
 import { addMember } from './members.js';
+import { ruleSettings } from './rule-settings.js';
+
+// ルールのシートがまだ読めていないときの標準ルール（GAS の「シートを準備」で入るものと同じ）
+const FALLBACK_PRESET = {
+  id: 'r_standard', name: 'いつものルール', group_id: '', players: 4, start_points: 25000, return_points: 30000,
+  uma: '20,10,-10,-20', uma_oka: true, rounding: 'round4', tie_break: 'seat',
+};
 
 // 絞り込みの状態。画面を移っても残す（アプリを閉じたら全期間に戻る）
 //   period：'all'＝全期間、'2026' などの年、'custom'＝from〜to を指定
@@ -149,8 +158,18 @@ export function sessionFormView(ctx, sessionId) {
     rule_name: latest?.rule_name,
   };
 
-  const rules = store.list('rules');
-  const ruleSelect = h('select', null, rules.map((r) => h('option', { value: r.id, selected: r.name === base.rule_name }, r.name)));
+  // ルール：プリセットを選び、端数処理とウマ・オカを切り替える。編集時は対局に保存したルールから始める
+  const presets = store.list('rules');
+  if (!presets.length) presets.push(FALLBACK_PRESET);
+  const snapshotId = (() => {
+    try { return JSON.parse(base.rule_snapshot || '{}').id; } catch { return undefined; }
+  })();
+  const initialPreset = presets.find((p) => p.id === snapshotId) || presets.find((p) => p.name === base.rule_name) || presets[0];
+  const rules = ruleSettings({
+    presets,
+    initialPresetId: initialPreset.id,
+    initialRule: existing ? sessionRule(existing) : null,
+  });
 
   const date = h('input', { type: 'date', value: base.date });
   const title = h('input', { type: 'text', value: base.title, placeholder: '任意', autocomplete: 'off' });
@@ -225,20 +244,29 @@ export function sessionFormView(ctx, sessionId) {
       alert('参加者を 4 人以上選んでください');
       return;
     }
-    const rule = rules.find((r) => r.id === ruleSelect.value);
+    const chosen = rules.read();
+    if (chosen.error) {
+      alert(chosen.error);
+      return;
+    }
     const id = existing?.id || newId('s');
     const session = {
       id,
       group_id: existing?.group_id || store.group.id,
       date: date.value,
       title: title.value.trim(),
-      rule_name: rule?.name || '',
-      rule_snapshot: ruleSnapshot(rule),
+      rule_name: chosen.preset.name || '',
+      rule_snapshot: ruleSnapshot(chosen.preset, chosen.settings),
       ...values,
       memo: memo.value.trim(),
       ...(existing ? {} : { created_by: getConfig().myName, event_id: '' }),
     };
-    store.write(sessionChanges({ session, memberIds: selected, existing: allParticipants }));
+    const changes = sessionChanges({ session, memberIds: selected, existing: allParticipants });
+    // ルールを変えたら、素点で入れた半荘の pt を新しいルールで計算し直す
+    const recomputed = existing ? recomputeScoreResults(t, id, sessionRule(session)) : [];
+    if (recomputed.length) changes.results = recomputed;
+    store.write(changes);
+    if (recomputed.length) alert('ルールが変わったので、素点で入れた半荘の pt を計算し直しました');
     ctx.replace(`#/session/${id}`);
   };
 
@@ -255,7 +283,7 @@ export function sessionFormView(ctx, sessionId) {
       h('section', { class: 'card' },
         h('label', { class: 'field' }, h('span', null, '対局日'), date),
         h('label', { class: 'field' }, h('span', null, 'タイトル'), title),
-        h('label', { class: 'field' }, h('span', null, 'ルール'), ruleSelect),
+        rules.el,
         h('div', { class: 'grid3' },
           h('label', { class: 'field' }, h('span', null, 'レート P/千点'), rate),
           h('label', { class: 'field' }, h('span', null, 'チップ P/枚'), chipRate),

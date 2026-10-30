@@ -25,7 +25,7 @@ const TABLES = {
   group_members: [['id', 's'], ['group_id', 's'], ['member_id', 's']],
   rules: [
     ['id', 's'], ['name', 's'], ['group_id', 's'], ['players', 'n'],
-    ['start_points', 'n'], ['return_points', 'n'], ['uma', 's'],
+    ['start_points', 'n'], ['return_points', 'n'], ['uma', 's'], ['uma_oka', 'b'],
     ['rounding', 's'], ['tie_break', 's'], ['note', 's'],
   ],
   sessions: [
@@ -373,12 +373,49 @@ function setupSheets() {
   if (!rules.byId.r_standard) {
     upsert_(rules, [{
       id: 'r_standard', name: 'いつものルール', group_id: '', players: 4,
-      start_points: 25000, return_points: 30000, uma: '20,10,-10,-20',
-      rounding: 'round5', tie_break: 'seat', note: '標準。オカ +20 はトップ',
+      start_points: 25000, return_points: 30000, uma: '20,10,-10,-20', uma_oka: true,
+      rounding: 'round4', tie_break: 'seat', note: '標準。オカ +20 はトップ',
     }]);
   }
 
-  SpreadsheetApp.getUi().alert('シートを準備しました。');
+  const done = runMigrations_();
+  SpreadsheetApp.getUi().alert('シートを準備しました。' + (done.length ? '\n\n' + done.join('\n') : ''));
+}
+
+// ---------------------------------------------------------------------------
+// 一度だけ行うデータの移行
+// 済んだものはスクリプトのプロパティに記録し、「シートを準備」を何度実行しても 2 回目以降は何もしない
+// （施主があとで手で値を変えても、上書きしないため）
+// ---------------------------------------------------------------------------
+
+const MIGRATIONS = [
+  ['2026-10-31_rules_uma_oka', function () {
+    const rules = readTable_('rules');
+    const col = rules.header.indexOf('uma_oka');
+    const changes = [];
+    rules.rows.forEach((r) => {
+      const change = {};
+      // 段階2で足した uma_oka 列。既存の行は空欄なので「あり」にする
+      if (col >= 0 && rules.rawById[r.id][col] === '') change.uma_oka = true;
+      // 仕様変更（2026-10-31）：「いつものルール」の端数処理は四捨五入
+      if (r.id === 'r_standard' && r.rounding !== 'round4') change.rounding = 'round4';
+      if (Object.keys(change).length) changes.push(Object.assign({ id: r.id }, change));
+    });
+    if (changes.length) upsert_(rules, changes);
+    return '「いつものルール」を「四捨五入・ウマオカあり」にしました。';
+  }],
+];
+
+// 未実行の移行を順に行い、行ったものの説明を返す
+function runMigrations_() {
+  const props = PropertiesService.getScriptProperties();
+  const done = [];
+  MIGRATIONS.forEach(([key, fn]) => {
+    if (props.getProperty('migration:' + key)) return;
+    done.push(fn());
+    props.setProperty('migration:' + key, new Date().toISOString());
+  });
+  return done;
 }
 
 // 合言葉を設定する。シートには SHA-256 のハッシュだけを保存し、平文はどこにも残さない
