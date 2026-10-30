@@ -1,5 +1,5 @@
 // 設定画面：自分の名前、GAS の URL、合言葉、同期の状況
-import { h } from '../util.js';
+import { h, setChildren } from '../util.js';
 import { getConfig, setConfig } from '../config.js';
 
 export function settingsView(ctx) {
@@ -44,13 +44,13 @@ export function settingsView(ctx) {
   // 同期の状況だけは、画面を作り直さずに最新にする（入力中の欄を消さないため）
   const update = () => {
     const pending = store.pendingCount();
-    status.replaceChildren(
+    setChildren(status,
       h('dt', null, 'グループ'), h('dd', null, store.group?.name || '—'),
       h('dt', null, '最終同期'), h('dd', null, store.lastSync ? new Date(store.lastSync).toLocaleString('ja-JP') : '—'),
       h('dt', null, '送信待ち'), h('dd', null, `${pending} 件`),
       store.error ? [h('dt', null, 'エラー'), h('dd', { class: 'ng' }, store.error)] : null,
     );
-    actions.replaceChildren(
+    setChildren(actions,
       h('button', { type: 'button', class: 'secondary', disabled: store.syncing, onclick: () => store.sync() },
         store.syncing ? '同期中…' : '今すぐ同期'),
       pending > 0

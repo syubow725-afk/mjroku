@@ -151,3 +151,114 @@ export function summarizeSession({ session, participants, hanchans }) {
     return { memberId: p.memberId, games, pt10, rankCounts, chips, fee: fees[i], ...money };
   });
 }
+
+// ---------------------------------------------------------------------------
+// 素点から pt（段階2。仕様書 6.1.1〜6.4）
+// ---------------------------------------------------------------------------
+//
+// 計算用のルールの形（normalizeRule で作る）
+//   start   … 持ち点（25000）
+//   ret     … 返し（30000）
+//   uma     … 1〜4 着のウマ（pt10 の配列。10-20 なら [200, 100, -100, -200]）
+//   umaOka  … false ならウマ・オカなし。返しは持ち点と同じとみなし、素点の差だけで pt にする
+//   rounding … 'none'（丸めない）／'round4'（四捨五入）／'round5'（五捨六入）／'floor'（切り捨て）／'ceil'（切り上げ）
+
+export const ROUNDING_LABELS = {
+  none: '丸めなし',
+  round4: '四捨五入',
+  round5: '五捨六入',
+  floor: '切り捨て',
+  ceil: '切り上げ',
+};
+
+// 100 点単位の素点 h（34 なら 3,400 点）の百の位を丸め、1,000 点単位にする。
+// 丸めは素点そのものの百の位に対して行う（返しとの差ではない。仕様書 6.3）。
+// マイナス（飛び）は絶対値で丸めて符号を戻す（仮決定）：−3,400 → −3,000、−3,600 → −4,000
+function roundHundreds(h, mode) {
+  if (mode === 'none' || !ROUNDING_LABELS[mode]) return h;
+  const abs = Math.abs(h);
+  const digit = abs % 10;          // 百の位
+  const base = abs - digit;        // 千点単位に切り捨てた値
+  const up = (mode === 'round4' && digit >= 5)
+    || (mode === 'round5' && digit >= 6)
+    || (mode === 'ceil' && digit > 0);
+  const rounded = up ? base + 10 : base;
+  return h < 0 ? -rounded : rounded;
+}
+
+// 素点（点）を丸める。表示とテスト用
+export function roundScore(score, mode) {
+  return roundHundreds(Math.round(score / 100), mode) * 100;
+}
+
+// 4 人の素点（点。席順＝起家から）を pt10 にする。戻り値も席順
+//   1. 着順：素点の高い順。同点は上家（席の番号が小さい人）が上位
+//   2. 2〜4 着：丸めた素点 − 返し（千点で割る）＋ ウマ
+//   3. トップ：−（2〜4 着の合計）。オカと丸めのずれはトップが吸収し、合計は必ず 0 になる
+// 内部は 100 点単位の整数で計算する。(素点 − 返し) ÷ 1,000 を ×10 した pt10 は「100 点単位の差」と同じ
+export function scoreToPt(scores, rule) {
+  const hs = scores.map((s) => Math.round(s / 100));
+  const order = hs
+    .map((h, seat) => ({ h, seat }))
+    .sort((a, b) => b.h - a.h || a.seat - b.seat);
+  const ranks = new Array(scores.length);
+  order.forEach(({ seat }, i) => { ranks[seat] = i + 1; });
+
+  const baseH = (rule.umaOka ? rule.ret : rule.start) / 100;
+  const uma = rule.umaOka ? rule.uma : [0, 0, 0, 0];
+  const pts10 = new Array(scores.length);
+  let others = 0;
+  order.slice(1).forEach(({ h, seat }, i) => {
+    const pt10 = roundHundreds(h, rule.rounding) - baseH + uma[i + 1];
+    pts10[seat] = pt10;
+    others += pt10;
+  });
+  pts10[order[0].seat] = -others;
+  return { ranks, pts10 };
+}
+
+// ウマの入力を pt10 の配列にする。読めなければ null
+//   "10-20" … 2・3 着が ±10、1・4 着が ±20
+//   "20,10,-10,-20" … 1〜4 着を直接。合計が 0 でなければ不可
+export function parseUma(input) {
+  const s = String(input ?? '').trim()
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/[−－‐]/g, '-');
+  const pair = /^(\d+(?:\.\d)?)\s*[-ー〜~]\s*(\d+(?:\.\d)?)$/.exec(s);
+  if (pair) {
+    const small = parsePt(pair[1]);
+    const large = parsePt(pair[2]);
+    return [large, small, -small, -large];
+  }
+  const values = s.split(/[,、，\s]+/).filter(Boolean).map(parsePt);
+  if (values.length !== 4 || values.some((v) => v == null) || sum(values) !== 0) return null;
+  return values;
+}
+
+// ウマを短く表す。上下対称なら "10-20"、そうでなければ "30/10/-5/-35"
+export function umaLabel(uma) {
+  const f = (v) => formatPt(v).replace('+', '');
+  const symmetric = uma[0] === -uma[3] && uma[1] === -uma[2] && uma[0] >= uma[1] && uma[1] >= 0;
+  return symmetric ? `${f(uma[1])}-${f(uma[0])}` : uma.map(f).join('/');
+}
+
+// 設定を 1 行で表す（対局作成画面と入力表の見出し用）
+// 例："25,000 持ち 30,000 返し・ウマ 10-20・丸めなし"
+export function describeRule(rule) {
+  const n = (v) => v.toLocaleString('ja-JP');
+  const umaPart = rule.umaOka ? ` ${n(rule.ret)} 返し・ウマ ${umaLabel(rule.uma)}` : '・ウマオカなし';
+  return `${n(rule.start)} 持ち${umaPart}・${ROUNDING_LABELS[rule.rounding] || ROUNDING_LABELS.none}`;
+}
+
+// シートの rules 行や対局の rule_snapshot（列名はシートと同じ）を計算用の形にする
+export function normalizeRule(row) {
+  const flag = row.uma_oka;
+  const umaOka = flag === undefined || flag === null || flag === '' ? true : flag === true || String(flag).toUpperCase() === 'TRUE';
+  return {
+    start: Number(row.start_points) || 25000,
+    ret: Number(row.return_points) || 30000,
+    uma: (umaOka && parseUma(row.uma)) || [0, 0, 0, 0],
+    umaOka,
+    rounding: ROUNDING_LABELS[row.rounding] ? row.rounding : 'none',
+  };
+}

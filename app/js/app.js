@@ -9,7 +9,7 @@ import { membersView } from './views/members.js';
 import { settingsView } from './views/settings.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.2.1';
 
 const store = new Store({ api, getConfig });
 

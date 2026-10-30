@@ -48,11 +48,22 @@ export function h(tag, props, ...children) {
     else if (key === 'checked') el.checked = value;
     else el.setAttribute(key, value === true ? '' : value);
   }
+  appendChildren(el, children);
+  return el;
+}
+
+// 要素の中身を入れ替える。null・false は飛ばし、配列は展開する
+// （DOM の replaceChildren に null を渡すと「null」という文字が出てしまうため、こちらを使う）
+export function setChildren(el, ...children) {
+  el.replaceChildren();
+  appendChildren(el, children);
+}
+
+function appendChildren(el, children) {
   for (const child of children.flat(Infinity)) {
     if (child == null || child === false) continue;
     el.append(child instanceof Node ? child : String(child));
   }
-  return el;
 }
 
 // 整数の入力欄の値を読む。空なら null、読めなければ NaN

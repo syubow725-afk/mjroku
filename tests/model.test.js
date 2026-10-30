@@ -90,20 +90,10 @@ test('hanchanChanges：着順を付け、抜けた人の成績を論理削除す
   assert.equal(ch2.results.filter((r) => !r.deleted).length, 4);
 });
 
-test('buildSession：2026/10/23 の対局を行の形で入れると本家と同じ収支になる', () => {
-  // 1〜6 半荘目は本家の表示どおり。7 半荘目以降は画面が切れているため、
-  // 各人の「計」との差を 1 行にまとめた（40 / 9 / -58 / 9）。合計・チップ・収支の検算用
+// 本家で記録した対局を、半荘ごとの pt（現場の書き方の文字列）とチップから組み立てる
+function realSession({ date, gameFee, rows, chips }) {
   const ids = ['a', 'b', 'c', 'd'];
-  const rows = [
-    ['-52', '-23', '69', '6'],
-    ['-24', '74', '8', '-58'],
-    ['46', '-53', '-7', '14'],
-    ['11', '49', '-43', '-17'],
-    ['-35', '-18', '6', '47'],
-    ['-18', '36', '-21', '3'],
-    ['40', '9', '-58', '9'],
-  ];
-  const session = { id: 's_1', group_id: 'g', date: '2026-10-23', rate: 50, chip_rate: 200, game_fee: 9000 };
+  const session = { id: 's_1', group_id: 'g', date, rate: 50, chip_rate: 200, game_fee: gameFee };
   const changes = [sessionChanges({ session, memberIds: ids })];
   rows.forEach((row, i) => {
     changes.push(hanchanChanges({
@@ -111,13 +101,51 @@ test('buildSession：2026/10/23 の対局を行の形で入れると本家と同
       entries: ids.map((memberId, j) => ({ memberId, pt10: parsePt(row[j]) })),
     }));
   });
-  changes.push({ participants: ids.map((m, i) => ({ id: `s_1:${m}`, chips: [-11, 12, -6, 5][i] })) });
+  changes.push({ participants: ids.map((m, i) => ({ id: `s_1:${m}`, chips: chips[i] })) });
+  return buildSession(tablesFrom(...changes), 's_1');
+}
 
-  const model = buildSession(tablesFrom(...changes), 's_1');
-  assert.equal(model.hanchans.length, 7);
+test('検算 1：2026/10/23（10 半荘、ゲーム代 9,000）が本家と同じ収支になる', () => {
+  const model = realSession({
+    date: '2026-10-23',
+    gameFee: 9000,
+    rows: [
+      ['-52', '-23', '+69', '+6'],
+      ['-24', '+74', '+8', '-58'],
+      ['+46', '-53', '-7', '+14'],
+      ['+11', '+49', '-43', '-17'],
+      ['-35', '-18', '+6', '+47'],
+      ['-18', '+36', '-21', '+3'],
+      ['-39', '+4', '+62', '-27'],
+      ['-17', '+14', '-41', '+44'],
+      ['+47', '+11', '-43', '-15'],
+      ['+49', '-20', '-36', '+7'],
+    ],
+    chips: [-11, 12, -6, 5],
+  });
+  assert.equal(model.hanchans.length, 10);
   assert.deepEqual(model.summary.map((s) => s.pt10), [-320, 740, -460, 40]);
   assert.deepEqual(model.summary.map((s) => s.subtotal), [-3800, 6100, -3500, 1200]);
+  assert.deepEqual(model.summary.map((s) => s.fee), [2250, 2250, 2250, 2250]);
   assert.deepEqual(model.summary.map((s) => s.balance), [-6050, 3850, -5750, -1050]);
+});
+
+test('検算 2：2026/9/26（ゲーム代 4,450 の端数は先頭に寄せる）が本家と同じ収支になる', () => {
+  const model = realSession({
+    date: '2026-09-26',
+    gameFee: 4450,
+    rows: [
+      ['-48', '-12', '+12', '+48'],
+      ['-25', '+7', '+58', '-40'],
+      ['+15', '+55', '-46', '-24'],
+      ['+3', '-19', '-41', '+57'],
+      ['-32', '-44', '0', '+76'],
+    ],
+    chips: [-3, 0, 0, 3],
+  });
+  assert.deepEqual(model.summary.map((s) => s.pt10), [-870, -130, -170, 1170]);
+  assert.deepEqual(model.summary.map((s) => s.fee), [1120, 1110, 1110, 1110]);
+  assert.deepEqual(model.summary.map((s) => s.balance), [-6070, -1760, -1960, 5340]);
 });
 
 test('sessionHanchans／buildSession：論理削除した半荘・対局は数えない', () => {

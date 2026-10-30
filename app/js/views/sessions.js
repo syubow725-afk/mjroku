@@ -1,5 +1,5 @@
 // 対局の一覧（履歴・絞り込み・集計）と、対局の作成・編集画面
-import { h, newId, todayStr, formatDate, formatMoney, signClass, readInt } from '../util.js';
+import { h, setChildren, newId, todayStr, formatDate, formatMoney, signClass, readInt } from '../util.js';
 import { formatPt } from '../calc.js';
 import { getConfig, isConfigured } from '../config.js';
 import { buildSession, memberName, sessionChanges, ruleSnapshot, filterSessions, aggregate } from '../model.js';
@@ -174,7 +174,7 @@ export function sessionFormView(ctx, sessionId) {
   const picker = h('div', { class: 'picker' });
   const renderPicker = () => {
     const members = store.list('members').sort((a, b) => a.name.localeCompare(b.name, 'ja'));
-    picker.replaceChildren(...members.map((m) => {
+    setChildren(picker, members.map((m) => {
       const index = selected.indexOf(m.id);
       return h('button', {
         type: 'button',
