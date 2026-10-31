@@ -509,6 +509,32 @@ test('opponentStats：同じ半荘を打った相手ごとに、勝ち負け・p
   assert.deepEqual(rows.map((r) => r.games), [2, 2, 1, 1]);
 });
 
+test('opponentStats：収支とチップ（同卓した対局のチップは丸ごと、ゲーム代は含めない）', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const mk = (sid, rate, chipRate, members, pts, chips) => [
+    sessionChanges({ session: { id: sid, group_id: 'g', date: '2026-10-29', rate, chip_rate: chipRate, game_fee: 9000 }, memberIds: members }),
+    ...pts.map((row, i) => hanchanChanges({
+      sessionId: sid, hanchanId: `${sid}_h${i}`, seq: i + 1,
+      entries: members.map((memberId, j) => ({ memberId, pt10: row[j] })).filter((e) => e.pt10 != null),
+    })),
+    { participants: members.map((m, i) => ({ id: `${sid}:${m}`, chips: chips[i] })) },
+  ];
+  const t = tablesFrom(
+    // s_1：レート 50、チップ 200。a は +10.0 と −5.5（2 半荘とも b と同卓）、チップ +3
+    ...mk('s_1', 50, 200, ids, [[100, 200, -100, -200], [-55, 155, 0, -100]], [3, 0, -1, -2]),
+    // s_2：レート 100、チップ 500。5 人打ちで、a と e が同卓したのは 2 回目だけ（a −10.0）、チップ −2
+    ...mk('s_2', 100, 500, [...ids, 'e'], [[200, 100, -100, -200, null], [-100, null, 50, -50, 100]], [-2, 1, 0, 0, 1]),
+  );
+  const byId = Object.fromEntries(opponentStats(t, ['s_1', 's_2'], 'a').map((r) => [r.memberId, r]));
+  // b：s_1 の 2 回（+4.5 → 225P）＋ s_2 の 1 回目（+20.0 → 2,000P）。チップは 3 − 2 = 1 枚 → 600 − 1,000
+  assert.equal(byId.b.games, 3);
+  assert.equal(byId.b.myPt10, 45 + 200);
+  assert.equal(byId.b.chips, 1);
+  assert.equal(byId.b.money, 225 + 600 + 2000 - 1000);
+  // e：s_2 の 2 回目だけ（−10.0 → −1,000P）。チップは s_2 の −2 枚 → −1,000P
+  assert.deepEqual([byId.e.games, byId.e.myPt10, byId.e.chips, byId.e.money], [1, -100, -2, -2000]);
+});
+
 test('aggregate：日数は対局した日の数（同じ日の対局 2 つは 1 日）', () => {
   const ids = ['a', 'b', 'c', 'd'];
   const mk = (sid, date) => [

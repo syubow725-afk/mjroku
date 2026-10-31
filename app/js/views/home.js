@@ -113,19 +113,25 @@ function statsBody(s, { points, period, calendar, opponents, t }) {
 
     opponents.length ? h('section', { class: 'card' },
       h('h2', null, '相手ごとの成績'),
-      opponentTable(opponents, t),
-      h('p', { class: 'muted small' }, '同じ半荘を打ったときだけを数えます。勝ち・負けは、その半荘の着順で相手より上か下か。自分 pt と平均着順（自分 / 相手）は、その相手と打った半荘での値です。')) : null);
+      opponentList(opponents, t),
+      h('p', { class: 'muted small' },
+        'その相手と同じ半荘を打ったときの、自分の成績です。収支はゲーム代を含みません。',
+        'チップは対局ごとの記録なので、その相手と 1 回でも同卓した対局の分を数えます。',
+        '勝ち・負けは、その半荘の着順で相手より上か下か。平均着順は「自分 / 相手」。')) : null);
 }
 
-function opponentTable(rows, t) {
-  return h('div', { class: 'table-wrap' }, h('table', { class: 'score opponents' },
-    h('thead', null,
-      h('tr', null, ['相手', '同卓', '勝-負', '勝率', '自分 pt', '平均着順'].map((c) => h('th', null, c)))),
-    h('tbody', null, rows.map((o) => h('tr', null,
-      h('th', null, memberName(t, o.memberId)),
-      h('td', null, o.games),
-      h('td', null, `${o.wins}-${o.losses}`),
-      h('td', null, formatRate(o.winRate)),
-      h('td', { class: signClass(o.myPt10) }, formatPt(o.myPt10)),
-      h('td', null, `${o.myAvgRank.toFixed(2)} / ${o.theirAvgRank.toFixed(2)}`))))));
+// 相手 1 人ずつのカード。本家の相手別と同じ 4 項目（対局数・スコア・収支・チップ）に、勝ち負けと平均着順を添える
+function opponentList(rows, t) {
+  const value = (label, text, cls = '') => h('div', { class: 'opp-value' },
+    h('div', { class: 'stat-label' }, label), h('div', { class: `num ${cls}` }, text));
+  return h('ul', { class: 'list opponents' }, rows.map((o) => h('li', { class: 'opp-item' },
+    h('div', { class: 'card-head' },
+      h('strong', { class: 'card-title' }, memberName(t, o.memberId)),
+      h('span', { class: 'muted small' }, `${o.games} 半荘`)),
+    h('div', { class: 'opp-values' },
+      value('スコア', formatPt(o.myPt10), signClass(o.myPt10)),
+      value('収支', formatMoney(o.money), signClass(o.money)),
+      value('チップ', formatChips(o.chips), signClass(o.chips))),
+    h('div', { class: 'list-sub' },
+      `${o.wins} 勝 ${o.losses} 敗（${formatRate(o.winRate)}）・平均着順 ${o.myAvgRank.toFixed(2)} / ${o.theirAvgRank.toFixed(2)}`))));
 }
