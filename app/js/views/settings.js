@@ -103,6 +103,25 @@ export function settingsView(ctx) {
         minMessage),
       h('section', { class: 'card' }, h('h2', null, '同期'), status, actions),
       h('p', { class: 'version' }, `麻雀録 v${ctx.version}`),
+      versionCheck(ctx),
     ),
   };
+}
+
+// 「最新の版を確認」。新しい版があれば画面下に「更新」の帯が出る
+function versionCheck(ctx) {
+  const result = h('p', { class: 'version' });
+  const button = h('button', {
+    type: 'button', class: 'small secondary',
+    onclick: async () => {
+      button.disabled = true;
+      result.textContent = '確認中…';
+      const { current, latest } = await ctx.checkUpdate();
+      button.disabled = false;
+      if (!latest) result.textContent = '確認できませんでした（通信を確かめてください）';
+      else if (latest === current) result.textContent = `最新です（v${current}）`;
+      else result.textContent = `新しい版 v${latest} があります。画面下の「更新」を押してください`;
+    },
+  }, '最新の版を確認');
+  return h('div', { class: 'version-check' }, button, result);
 }

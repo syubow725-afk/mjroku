@@ -10,9 +10,10 @@ import { settingsView } from './views/settings.js';
 import { rulesView, ruleEditView } from './views/rules.js';
 import { homeView } from './views/home.js';
 import { rankingView } from './views/ranking.js';
+import { setupUpdates } from './update.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.4.6';
+const APP_VERSION = '0.4.7';
 
 const store = new Store({ api, getConfig });
 
@@ -118,6 +119,11 @@ if (!isConfigured() && !location.hash) location.hash = '#/settings';
 render();
 store.sync();
 
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => { /* 登録できなくてもオンラインでは動く */ });
-}
+// 新しい版の確認と「更新」の帯（Service Worker の登録もここで行う）
+const updates = setupUpdates({
+  version: APP_VERSION,
+  banner: document.getElementById('update-banner'),
+  text: document.getElementById('update-text'),
+  button: document.getElementById('update-button'),
+});
+ctx.checkUpdate = updates.check;

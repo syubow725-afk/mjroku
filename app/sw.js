@@ -3,7 +3,7 @@
 'use strict';
 
 // app.js の APP_VERSION と揃えて上げる。上げると古いキャッシュは activate 時に消える
-const CACHE_VERSION = '0.4.6';
+const CACHE_VERSION = '0.4.7';
 const CACHE_NAME = `mjroku-${CACHE_VERSION}`;
 
 // js を足したらここにも足す
@@ -19,6 +19,7 @@ const APP_SHELL = [
   'js/model.js',
   'js/share.js',
   'js/store.js',
+  'js/update.js',
   'js/util.js',
   'js/views/calendar.js',
   'js/views/chart.js',
@@ -35,10 +36,12 @@ const APP_SHELL = [
   'icons/icon-512.png',
 ];
 
+// 新しい版のファイルは、ブラウザの HTTP キャッシュを通さずに取る（cache: 'reload'）。
+// GitHub Pages はファイルを 10 分キャッシュさせるので、通すと古い版が新しいキャッシュに混ざることがある
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => cache.addAll(APP_SHELL))
+      .then((cache) => cache.addAll(APP_SHELL.map((url) => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting())
   );
 });
@@ -59,7 +62,10 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
-  if (new URL(request.url).origin !== self.location.origin) return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  // sw.js はアプリが新しい版の確認に読むので、キャッシュせず素通しする（js/update.js）
+  if (url.pathname.endsWith('/sw.js')) return;
 
   event.respondWith(
     caches.open(CACHE_NAME).then(async (cache) => {
