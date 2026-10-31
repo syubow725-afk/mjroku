@@ -4,7 +4,7 @@ import { overlay, addToOutbox, removeSent, countOutbox, indexRows, emptyTables }
 import {
   toPt10, fromPt10, buildSession, sessionChanges, hanchanChanges, sessionHanchans,
   filterSessions, aggregate, scoreEntries, recomputeScoreResults, ruleSnapshot, sessionRule, umaToString,
-  presetRow, sortPresets, copyName, STANDARD_PRESET,
+  presetRow, sortPresets, copyName, STANDARD_PRESET, rankBy, rankWithMinimum,
 } from '../app/js/model.js';
 import { parsePt } from '../app/js/calc.js';
 
@@ -363,4 +363,38 @@ test('aggregate：飛び率は素点で入れた半荘だけで数える', () =>
   assert.equal(d.tobi, 1);
   assert.equal(d.tobiRate, 1 / 2);
   assert.equal(d.lastAvoidRate, 0);
+});
+
+test('rankBy：高い順に順位を付け、同じ値は同じ順位、率が出ない人は外す', () => {
+  const rows = [
+    { memberId: 'a', games: 10, pt10: 300, topRate: 0.3 },
+    { memberId: 'b', games: 6, pt10: -500, topRate: 2 / 6 },
+    { memberId: 'c', games: 3, pt10: 300, topRate: 1 / 3 },
+    { memberId: 'd', games: 0, pt10: 0, topRate: null },
+  ];
+  const byPt = rankBy(rows, (r) => r.pt10);
+  assert.deepEqual(byPt.map((x) => [x.row.memberId, x.place]), [['a', 1], ['c', 1], ['d', 3], ['b', 4]]);
+  // 2/6 と 1/3 は同じ率なので同じ順位。並びは半荘数の多い順
+  const byTop = rankBy(rows, (r) => r.topRate);
+  assert.deepEqual(byTop.map((x) => [x.row.memberId, x.place]), [['b', 1], ['c', 1], ['a', 3]]);
+  assert.deepEqual(rankBy([], (r) => r.pt10), []);
+});
+
+test('rankWithMinimum：規定半荘数に届かない人は順位を付けずに下にまとめる', () => {
+  const rows = [
+    { memberId: 'a', games: 12, topRate: 0.25 },
+    { memberId: 'b', games: 10, topRate: 0.4 },
+    { memberId: 'c', games: 9, topRate: 0.6 },
+    { memberId: 'd', games: 0, topRate: null },
+    { memberId: 'e', games: 3, topRate: 0 },
+  ];
+  const { ranked, below } = rankWithMinimum(rows, (r) => r.topRate, 10);
+  // 10 半荘ちょうどは規定に届いている
+  assert.deepEqual(ranked.map((x) => [x.row.memberId, x.place]), [['b', 1], ['a', 2]]);
+  // 規定未満は率の高い順、率の出ない人は最後
+  assert.deepEqual(below.map((x) => x.row.memberId), ['c', 'e', 'd']);
+  // 規定 0 なら半荘 0 の人だけが下に残る
+  const zero = rankWithMinimum(rows, (r) => r.topRate, 0);
+  assert.deepEqual(zero.ranked.map((x) => x.row.memberId), ['c', 'b', 'a', 'e']);
+  assert.deepEqual(zero.below.map((x) => x.row.memberId), ['d']);
 });

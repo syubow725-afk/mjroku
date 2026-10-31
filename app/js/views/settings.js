@@ -1,6 +1,6 @@
-// 設定画面：自分の名前、GAS の URL、合言葉、同期の状況
-import { h, setChildren } from '../util.js';
-import { getConfig, setConfig } from '../config.js';
+// 設定画面：自分の名前、GAS の URL、合言葉、ランキングの規定半荘数、同期の状況
+import { h, setChildren, readInt } from '../util.js';
+import { getConfig, setConfig, getMinGames } from '../config.js';
 
 export function settingsView(ctx) {
   const { store } = ctx;
@@ -37,6 +37,23 @@ export function settingsView(ctx) {
       }
     },
   }, '保存して接続');
+
+  // 率のランキングの規定半荘数。この端末だけの設定で、入れたらすぐ保存する
+  const minMessage = h('p', { class: 'result' });
+  const minGames = h('input', {
+    inputmode: 'numeric', value: String(getMinGames(config)), class: 'narrow',
+    onchange: (e) => {
+      const n = readInt(e.target.value);
+      if (n == null || Number.isNaN(n) || n < 0) {
+        minMessage.className = 'result ng';
+        minMessage.textContent = '0 以上の整数で入れてください';
+        return;
+      }
+      setConfig({ minGames: String(n) });
+      minMessage.className = 'result ok';
+      minMessage.textContent = `${n} 半荘以上の人に順位を付けます`;
+    },
+  });
 
   const status = h('dl', { class: 'kv' });
   const actions = h('div', { class: 'button-row' });
@@ -78,6 +95,12 @@ export function settingsView(ctx) {
       h('a', { class: 'list-item link', href: '#/rules' },
         h('span', { class: 'list-main' }, 'ルール', h('div', { class: 'list-sub' }, 'プリセットの追加・編集・複製・削除')),
         h('span', { class: 'muted' }, '›')),
+      h('section', { class: 'card' },
+        h('h2', null, 'ランキング'),
+        h('label', { class: 'field' }, h('span', null, '率の規定半荘数（トップ率・連対率・ラス回避率）'),
+          h('div', { class: 'inline' }, minGames, h('span', null, '半荘以上'))),
+        h('p', { class: 'muted small' }, '届かない人は「規定未満」として下にまとめて出します。この端末だけの設定です。'),
+        minMessage),
       h('section', { class: 'card' }, h('h2', null, '同期'), status, actions),
       h('p', { class: 'version' }, `麻雀録 v${ctx.version}`),
     ),

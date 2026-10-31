@@ -9,9 +9,10 @@ import { membersView } from './views/members.js';
 import { settingsView } from './views/settings.js';
 import { rulesView, ruleEditView } from './views/rules.js';
 import { homeView } from './views/home.js';
+import { rankingView } from './views/ranking.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.4.2';
 
 const store = new Store({ api, getConfig });
 
@@ -33,6 +34,7 @@ const ctx = {
 // [ハッシュの形, 画面, 下のタブ]
 const routes = [
   [/^#\/home$/, () => homeView(ctx), 'home'],
+  [/^#\/ranking$/, () => rankingView(ctx), 'ranking'],
   [/^#\/sessions\/new$/, () => sessionFormView(ctx, null), 'sessions'],
   [/^#\/session\/([^/]+)\/edit$/, (m) => sessionFormView(ctx, m[1]), 'sessions'],
   [/^#\/session\/([^/]+)\/hanchan\/([^/]+)$/, (m) => hanchanView(ctx, m[1], m[2]), 'sessions'],

@@ -185,6 +185,30 @@ function rates({ games, rankCounts, scoredGames, tobi }) {
   };
 }
 
+// ランキング：aggregate の行を value(行) の高い順に並べ、順位を付ける。
+// value が null の人（半荘がなく率が出ない人）は外す。同じ値は同じ順位（1, 1, 3 …）で、並びは半荘数の多い順
+export function rankBy(rows, value) {
+  const list = rows
+    .map((row) => ({ row, value: value(row) }))
+    .filter((x) => x.value != null)
+    .sort((a, b) => b.value - a.value || b.row.games - a.row.games);
+  list.forEach((x, i) => {
+    x.place = i > 0 && x.value === list[i - 1].value ? list[i - 1].place : i + 1;
+  });
+  return list;
+}
+
+// 率のランキング：規定半荘数（minGames）以上の人だけに順位を付ける。
+// 届かない人（率が出ない半荘 0 の人も含む）は消さずに below に率の高い順で入れる（画面では「規定未満」として下にまとめる）
+export function rankWithMinimum(rows, value, minGames) {
+  const qualified = (r) => r.games >= minGames && value(r) != null;
+  const below = rows
+    .filter((r) => !qualified(r))
+    .map((row) => ({ row, value: value(row) }))
+    .sort((a, b) => (b.value ?? -1) - (a.value ?? -1) || b.row.games - a.row.games);
+  return { ranked: rankBy(rows.filter(qualified), value), below };
+}
+
 // ルールプリセットの行から、対局に保存するスナップショット（JSON 文字列）を作る
 //   settings … 対局作成画面で切り替えた { umaOka, uma（pt10 の配列）, rounding, tieBreak }。省いた項目はプリセットのまま
 export function ruleSnapshot(preset, settings = {}) {

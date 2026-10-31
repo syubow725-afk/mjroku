@@ -32,7 +32,7 @@
 │   ├─ sw.js          Service Worker
 │   ├─ js/            calc.js（計算ロジック）ほか
 │   └─ icons/         アイコン PNG（180/192/512px）
-├─ gas/               Apps Script のソース（Code.gs）。clasp 管理は任意
+├─ gas/               Apps Script のソース（Code.gs、appsscript.json）。clasp で GAS に押し上げる
 └─ tests/             計算ロジックのテスト（node --test で実行）
 ```
 
@@ -49,6 +49,7 @@
 - 点数計算（素点→pt、端数処理、着順判定、精算）は `app/js/calc.js` に**純粋関数**として切り出し、`tests/` にテストを書く。仕様書の計算例は必ずテストケースに入れる
 - 金額・pt の計算で浮動小数の誤差を出さない（内部は 100 点単位・整数で持ち、表示時に換算する）
 - GAS のウェブアプリ URL と合言葉はソースに直書きしない。アプリ側は初回起動時に入力させ端末に保存する
+- GAS の更新は clasp で行う（`.clasp.json` はルートに置き、`gas/` を指す。`.gitignore` 済み）。`clasp push --force` → `clasp redeploy <@HEAD でない方のデプロイ ID>` の順。デプロイ ID は URL の一部なので、表示・記録しない。push と redeploy は施主の OK を取ってから行う。「シートを準備」は施主がスプレッドシートのメニューから実行する
 - 通信できないときは端末に一時保存し、復帰後に送信する（現場は電波が弱いことがある）
 - 削除は論理削除（`deleted` フラグ）。誤操作から復旧できるようにする
 - 第三者のキャラクター・ロゴ・既存アプリの画面素材は使わない

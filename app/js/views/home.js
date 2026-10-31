@@ -70,8 +70,8 @@ function statsBody(s) {
       tile('総スコア', formatPt(s.pt10), signClass(s.pt10)),
       tile('総チップ', formatChips(s.chips), signClass(s.chips)),
       tile('平均着順', s.avgRank == null ? '—' : s.avgRank.toFixed(2)),
-      tile('対局数', `${s.sessions} 日`),
-      tile('半荘数', `${s.games} 回`),
+      tile('対局数', `${s.games} 半荘`),
+      tile('日数', `${s.sessions} 日`),
       tile('飛び率', formatRate(s.tobiRate))),
 
     h('div', { class: 'table-wrap' }, h('table', { class: 'score ranks' },
