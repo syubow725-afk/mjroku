@@ -162,6 +162,12 @@ export function summarizeSession({ session, participants, hanchans }) {
 //   uma     … 1〜4 着のウマ（pt10 の配列。10-20 なら [200, 100, -100, -200]）
 //   umaOka  … false ならウマ・オカなし。返しは持ち点と同じとみなし、素点の差だけで pt にする
 //   rounding … 'none'（丸めない）／'round4'（四捨五入）／'round5'（五捨六入）／'floor'（切り捨て）／'ceil'（切り上げ）
+//   tieBreak … 同点のとき 'seat'（上家優先）／'split'（ウマ・オカを等分。Mリーグ方式）
+
+export const TIE_BREAK_LABELS = {
+  seat: '上家優先',
+  split: '等分',
+};
 
 export const ROUNDING_LABELS = {
   none: '丸めなし',
@@ -193,9 +199,13 @@ export function roundScore(score, mode) {
 
 // 4 人の素点（点。席順＝起家から）を pt10 にする。戻り値も席順
 //   1. 着順：素点の高い順。同点は上家（席の番号が小さい人）が上位
-//   2. 2〜4 着：丸めた素点 − 返し（千点で割る）＋ ウマ
-//   3. トップ：−（2〜4 着の合計）。オカと丸めのずれはトップが吸収し、合計は必ず 0 になる
+//   2. 各自：丸めた素点 − 返し（千点で割る）＋ ウマ
+//   3. オカと丸めのずれ（合計を 0 にする残り）はトップが受け取る。合計は必ず 0 になる
 // 内部は 100 点単位の整数で計算する。(素点 − 返し) ÷ 1,000 を ×10 した pt10 は「100 点単位の差」と同じ
+//
+// 同点を「等分」にしたとき（Mリーグ方式）：同点の人たちが占める順位のウマを合計して人数で割る。
+// トップが同点なら、オカと丸めのずれも同点の人たちで分ける。
+// 0.1pt 未満の端数は起家に近い人から 0.1pt ずつ配る。着順の記録は上家優先のまま（統計で着順を 1 つに決めるため）
 export function scoreToPt(scores, rule) {
   const hs = scores.map((s) => Math.round(s / 100));
   const order = hs
@@ -204,17 +214,35 @@ export function scoreToPt(scores, rule) {
   const ranks = new Array(scores.length);
   order.forEach(({ seat }, i) => { ranks[seat] = i + 1; });
 
+  const split = rule.tieBreak === 'split';
   const baseH = (rule.umaOka ? rule.ret : rule.start) / 100;
-  const uma = rule.umaOka ? rule.uma : [0, 0, 0, 0];
-  const pts10 = new Array(scores.length);
-  let others = 0;
-  order.slice(1).forEach(({ h, seat }, i) => {
-    const pt10 = roundHundreds(h, rule.rounding) - baseH + uma[i + 1];
-    pts10[seat] = pt10;
-    others += pt10;
+  // 同点の人のまとまり（着順の並びでの位置）。上家優先なら 1 人ずつ
+  const groups = [];
+  order.forEach(({ h }, i) => {
+    const last = groups[groups.length - 1];
+    if (split && last && order[last[0]].h === h) last.push(i);
+    else groups.push([i]);
   });
-  pts10[order[0].seat] = -others;
+
+  const uma = rule.umaOka ? rule.uma : [0, 0, 0, 0];
+  const sorted = order.map(({ h }) => roundHundreds(h, rule.rounding) - baseH);
+  for (const g of groups) {
+    const shares = splitAmong(sum(g.map((i) => uma[i])), g.length);
+    g.forEach((i, k) => { sorted[i] += shares[k]; });
+  }
+  const rest = splitAmong(-sum(sorted), groups[0].length);
+  groups[0].forEach((i, k) => { sorted[i] += rest[k]; });
+
+  const pts10 = new Array(scores.length);
+  order.forEach(({ seat }, i) => { pts10[seat] = sorted[i] || 0; }); // -0 にしない
   return { ranks, pts10 };
+}
+
+// 整数 total を n 人で分ける。割り切れない分は前の人（起家に近い人）から 1 ずつ多くする
+function splitAmong(total, n) {
+  const each = Math.floor(total / n);
+  const extra = total - each * n;
+  return Array.from({ length: n }, (_, k) => each + (k < extra ? 1 : 0));
 }
 
 // ウマの入力を pt10 の配列にする。読めなければ null
@@ -247,7 +275,8 @@ export function umaLabel(uma) {
 export function describeRule(rule) {
   const n = (v) => v.toLocaleString('ja-JP');
   const umaPart = rule.umaOka ? ` ${n(rule.ret)} 返し・ウマ ${umaLabel(rule.uma)}` : '・ウマオカなし';
-  return `${n(rule.start)} 持ち${umaPart}・${ROUNDING_LABELS[rule.rounding] || ROUNDING_LABELS.none}`;
+  const tiePart = rule.umaOka && rule.tieBreak === 'split' ? '・同点は等分' : '';
+  return `${n(rule.start)} 持ち${umaPart}・${ROUNDING_LABELS[rule.rounding] || ROUNDING_LABELS.none}${tiePart}`;
 }
 
 // シートの rules 行や対局の rule_snapshot（列名はシートと同じ）を計算用の形にする
@@ -260,5 +289,6 @@ export function normalizeRule(row) {
     uma: (umaOka && parseUma(row.uma)) || [0, 0, 0, 0],
     umaOka,
     rounding: ROUNDING_LABELS[row.rounding] ? row.rounding : 'none',
+    tieBreak: row.tie_break === 'split' ? 'split' : 'seat',
   };
 }

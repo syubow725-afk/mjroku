@@ -4,15 +4,10 @@ import { formatPt } from '../calc.js';
 import { getConfig, isConfigured } from '../config.js';
 import {
   buildSession, memberName, sessionChanges, ruleSnapshot, filterSessions, aggregate, sessionRule, recomputeScoreResults,
+  STANDARD_PRESET, presetRow, sortPresets,
 } from '../model.js';
 import { addMember } from './members.js';
 import { ruleSettings } from './rule-settings.js';
-
-// ルールのシートがまだ読めていないときの標準ルール（GAS の「シートを準備」で入るものと同じ）
-const FALLBACK_PRESET = {
-  id: 'r_standard', name: 'いつものルール', group_id: '', players: 4, start_points: 25000, return_points: 30000,
-  uma: '20,10,-10,-20', uma_oka: true, rounding: 'round4', tie_break: 'seat',
-};
 
 // 絞り込みの状態。画面を移っても残す（アプリを閉じたら全期間に戻る）
 //   period：'all'＝全期間、'2026' などの年、'custom'＝from〜to を指定
@@ -159,8 +154,8 @@ export function sessionFormView(ctx, sessionId) {
   };
 
   // ルール：プリセットを選び、端数処理とウマ・オカを切り替える。編集時は対局に保存したルールから始める
-  const presets = store.list('rules');
-  if (!presets.length) presets.push(FALLBACK_PRESET);
+  const presets = sortPresets(store.list('rules'));
+  if (!presets.length) presets.push(STANDARD_PRESET);
   const snapshotId = (() => {
     try { return JSON.parse(base.rule_snapshot || '{}').id; } catch { return undefined; }
   })();
@@ -169,6 +164,22 @@ export function sessionFormView(ctx, sessionId) {
     presets,
     initialPresetId: initialPreset.id,
     initialRule: existing ? sessionRule(existing) : null,
+    // その場で調整した設定を、このグループ限定の新しいルールとして保存する（共通にするのはルール画面で）
+    onSaveAsPreset: (r) => {
+      const name = prompt('ルールの名前', `${r.preset.name}（調整）`)?.trim();
+      if (!name) return null;
+      if (store.list('rules').some((x) => x.name === name)) {
+        alert(`「${name}」はもうあります`);
+        return null;
+      }
+      const row = presetRow({
+        id: newId('r'), name, groupId: store.group.id, start: r.rule.start, ret: r.rule.ret,
+        umaOka: r.settings.umaOka, uma: r.umaChoice, rounding: r.settings.rounding, tieBreak: r.settings.tieBreak,
+      });
+      store.write({ rules: [row] });
+      alert(`「${name}」を「${store.group.name}」のルールとして保存しました`);
+      return row;
+    },
   });
 
   const date = h('input', { type: 'date', value: base.date });

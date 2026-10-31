@@ -132,8 +132,13 @@ export function filterSessions(sessions, { from = '', to = '', rule = '' } = {})
   return sessions.filter((s) => (!from || s.date >= from) && (!to || s.date <= to) && (!rule || s.rule_name === rule));
 }
 
-// 複数の対局をメンバーごとに合算する（本家の「全件集計」「合算集計」に相当）。
-// 戻り値は収支（ゲーム代込）の高い順。avgRank は半荘がなければ null
+// 複数の対局をメンバーごとに合算する（本家の「全件集計」「合算集計」、ホーム、ランキングで使う）。
+// 戻り値は収支（ゲーム代込）の高い順。率は半荘がなければ null
+//   sessions … 参加した対局の数（日数）／games … 打った半荘の数（5 人以上の対局の抜け番は数えない）
+//   pt10 … 総スコア／chips … 総チップ（枚）／subtotal … 収支（ゲーム代別）／balance … 収支（ゲーム代込）
+//   rankRates … 1〜4 着の率／topRate … トップ率／rentaiRate … 連対率（1・2 着）／lastAvoidRate … ラス回避率
+//   scoredGames … 素点が分かる半荘の数／tobi … そのうち素点がマイナスだった回数／tobiRate … 飛び率
+//     pt で入れた半荘は素点が分からないので、飛び率の分母に入れない
 export function aggregate(tables, sessionIds) {
   const byMember = new Map();
   for (const id of sessionIds) {
@@ -142,7 +147,7 @@ export function aggregate(tables, sessionIds) {
     for (const s of model.summary) {
       const a = byMember.get(s.memberId) || {
         memberId: s.memberId, sessions: 0, games: 0, rankCounts: [0, 0, 0, 0],
-        pt10: 0, chips: 0, subtotal: 0, balance: 0,
+        pt10: 0, chips: 0, subtotal: 0, balance: 0, scoredGames: 0, tobi: 0,
       };
       a.sessions += 1;
       a.games += s.games;
@@ -153,17 +158,35 @@ export function aggregate(tables, sessionIds) {
       a.balance += s.balance;
       byMember.set(s.memberId, a);
     }
+    for (const { results } of model.hanchans) {
+      for (const r of Object.values(results)) {
+        const a = byMember.get(r.member_id);
+        if (!a || r.raw_score == null || r.raw_score === '') continue;
+        a.scoredGames += 1;
+        if (Number(r.raw_score) < 0) a.tobi += 1;
+      }
+    }
   }
   return [...byMember.values()]
-    .map((a) => ({
-      ...a,
-      avgRank: a.games ? a.rankCounts.reduce((acc, n, i) => acc + n * (i + 1), 0) / a.games : null,
-    }))
+    .map((a) => ({ ...a, ...rates(a) }))
     .sort((x, y) => y.balance - x.balance);
 }
 
+// 回数から率を出す（表示用。金額や pt と違い、小数で持って良い）
+function rates({ games, rankCounts, scoredGames, tobi }) {
+  const rate = (n) => (games ? n / games : null);
+  return {
+    avgRank: games ? rankCounts.reduce((acc, n, i) => acc + n * (i + 1), 0) / games : null,
+    rankRates: rankCounts.map(rate),
+    topRate: rate(rankCounts[0]),
+    rentaiRate: rate(rankCounts[0] + rankCounts[1]),
+    lastAvoidRate: rate(games - rankCounts[3]),
+    tobiRate: scoredGames ? tobi / scoredGames : null,
+  };
+}
+
 // ルールプリセットの行から、対局に保存するスナップショット（JSON 文字列）を作る
-//   settings … 対局作成画面で切り替えた { umaOka, uma（pt10 の配列）, rounding }。省いた項目はプリセットのまま
+//   settings … 対局作成画面で切り替えた { umaOka, uma（pt10 の配列）, rounding, tieBreak }。省いた項目はプリセットのまま
 export function ruleSnapshot(preset, settings = {}) {
   if (!preset) return '';
   const rule = { ...normalizeRule(preset), ...settings };
@@ -176,7 +199,7 @@ export function ruleSnapshot(preset, settings = {}) {
     uma: umaToString(rule.uma),
     uma_oka: rule.umaOka,
     rounding: rule.rounding,
-    tie_break: preset.tie_break || 'seat',
+    tie_break: rule.tieBreak,
   });
 }
 
@@ -185,8 +208,13 @@ export function umaToString(uma) {
   return uma.map((v) => formatPt(v).replace('+', '')).join(',');
 }
 
-// 標準ルール（スナップショットがない・欠けているときの補い）
-const STANDARD_RULE = { start_points: 25000, return_points: 30000, uma: '20,10,-10,-20', uma_oka: true, rounding: 'round4' };
+// 標準ルール「いつものルール」（GAS の「シートを準備」で入るものと同じ）。
+// ルールのシートがまだ読めていないときや、対局のスナップショットが欠けているときの補いに使う
+export const STANDARD_PRESET = {
+  id: 'r_standard', name: 'いつものルール', group_id: '', players: 4, start_points: 25000, return_points: 30000,
+  uma: '20,10,-10,-20', uma_oka: true, rounding: 'round4', tie_break: 'seat',
+};
+const STANDARD_RULE = STANDARD_PRESET;
 
 // 対局に保存したルール（rule_snapshot）を計算用の形にする
 export function sessionRule(session) {
@@ -195,4 +223,28 @@ export function sessionRule(session) {
     snapshot = JSON.parse(session?.rule_snapshot || '{}') || {};
   } catch { /* 壊れていたら標準ルール */ }
   return normalizeRule({ ...STANDARD_RULE, ...snapshot });
+}
+
+// ルールのシートの行を作る（ルール画面と「この設定をルールとして保存」で使う）
+//   groupId … 空なら全グループ共通、グループの id ならそのグループ限定
+//   uma     … ウマ・オカなしでも、選んでいたウマを残す（あとで「あり」に戻したとき使う）
+export function presetRow({ id, name, groupId = '', start, ret, umaOka, uma, rounding, tieBreak = 'seat', note = '' }) {
+  return {
+    id, name, group_id: groupId, players: 4, start_points: start, return_points: ret,
+    uma: umaToString(uma), uma_oka: umaOka, rounding, tie_break: tieBreak, note,
+  };
+}
+
+// ルールの並び：全グループ共通を先に、次にグループ限定。それぞれ作った順
+export function sortPresets(rows) {
+  return [...rows].sort((a, b) => (a.group_id ? 1 : 0) - (b.group_id ? 1 : 0)
+    || String(a.created_at || '').localeCompare(String(b.created_at || '')));
+}
+
+// 複製したときの名前。「〇〇のコピー」が既にあれば「〇〇のコピー2」…
+export function copyName(name, existingNames) {
+  const used = new Set(existingNames);
+  let candidate = `${name}のコピー`;
+  for (let n = 2; used.has(candidate); n++) candidate = `${name}のコピー${n}`;
+  return candidate;
 }

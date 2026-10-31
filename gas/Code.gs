@@ -81,16 +81,16 @@ function doGet(e) {
 function doPost(e) {
   try {
     const req = JSON.parse(e.postData.contents);
-    const group = authenticate_(req.passcode);
-    if (!group) {
+    const auth = authenticate_(req.passcode);
+    if (!auth) {
       Utilities.sleep(1000); // 総当たりを遅くする
       return json_({ ok: false, error: 'bad_passcode' });
     }
     if (req.action === 'load') {
-      return json_(Object.assign({ ok: true }, load_(group)));
+      return json_(Object.assign({ ok: true }, load_(auth)));
     }
     if (req.action === 'save') {
-      return json_({ ok: true, saved: save_(group, req.records || {}), server_time: new Date().toISOString() });
+      return json_({ ok: true, saved: save_(auth, req.records || {}), server_time: new Date().toISOString() });
     }
     return json_({ ok: false, error: 'unknown action: ' + req.action });
   } catch (err) {
@@ -115,19 +115,30 @@ function hash_(groupId, passcode) {
   return bytes.map((b) => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
 }
 
-// 合言葉に一致するグループを返す。なければ null
+// 合言葉を照合し、{ group, role } を返す。一致しなければ null。
+// role は今は 'member' だけ。段階4で「管理者用の合言葉」を足したら、ここで 'admin' を返す
+// （方針は docs/05_次の作業メモ「権限の分け方」。判定は必ず GAS で行い、アプリの表示に頼らない）
 function authenticate_(passcode) {
   const code = String(passcode || '').trim();
   if (!code) return null;
   const groups = readTable_('groups').rows;
-  return groups.find((g) => !g.deleted && g.passcode_hash && g.passcode_hash === hash_(g.id, code)) || null;
+  const group = groups.find((g) => !g.deleted && g.passcode_hash && g.passcode_hash === hash_(g.id, code));
+  return group ? { group: group, role: 'member' } : null;
+}
+
+// 権限の判定。保存する 1 行ごとに呼ぶ（sheet：シート名、row：保存後の行、existing：上書きされる既存の行）。
+// 今は合言葉が通れば全員同じ権限なので常に許可する。
+// 段階4で管理者だけに絞る操作（ルールの追加・編集、削除した対局の復元など）は、ここに条件を足す
+function authorize_(auth, sheet, row, existing) {
+  return true;
 }
 
 // ---------------------------------------------------------------------------
 // 読み込み：合言葉のグループ G に関係する行だけを返す
 // ---------------------------------------------------------------------------
 
-function load_(group) {
+function load_(auth) {
+  const group = auth.group;
   const G = group.id;
   const t = {};
   WRITABLE.forEach((name) => { t[name] = readTable_(name).rows; });
@@ -141,6 +152,7 @@ function load_(group) {
 
   return {
     group: { id: group.id, name: group.name }, // passcode_hash は返さない
+    role: auth.role,
     data: {
       members: t.members.filter((r) => memberIds.has(r.id)),
       group_members: groupMembers,
@@ -158,7 +170,7 @@ function load_(group) {
 // 保存：全行を検査してから書く（1 行でもグループ外があれば何も書かない）
 // ---------------------------------------------------------------------------
 
-function save_(group, records) {
+function save_(auth, records) {
   const lock = LockService.getScriptLock();
   lock.waitLock(20000); // 同時に保存が来ても行が重ならないよう 1 件ずつ処理する
   try {
@@ -180,14 +192,15 @@ function save_(group, records) {
         return Object.assign({}, tables[name].byId[row.id] || {}, row);
       });
     });
-    const belongs = ownership_(group.id, tables, merged);
+    const belongs = ownership_(auth.group.id, tables, merged);
 
-    // 保存後の行も、上書きされる既存の行も、どちらも G のものでなければならない
+    // 保存後の行も、上書きされる既存の行も、どちらも G のものでなければならない。そのうえで権限を見る
     names.forEach((name) => {
       merged[name].forEach((row) => {
         if (!belongs(name, row)) throw new Error('グループ外のデータ: ' + name + ' ' + row.id);
         const existing = tables[name].byId[row.id];
         if (existing && !belongs(name, existing)) throw new Error('グループ外のデータ: ' + name + ' ' + row.id);
+        if (!authorize_(auth, name, row, existing || null)) throw new Error('権限がありません: ' + name + ' ' + row.id);
       });
     });
 
@@ -214,8 +227,10 @@ function ownership_(G, tables, records) {
     switch (name) {
       case 'sessions':
       case 'group_members':
-      case 'rules':
         return row.group_id === G;
+      case 'rules':
+        // 全グループ共通（group_id が空）か、このグループ限定のルール
+        return !row.group_id || row.group_id === G;
       case 'participants':
       case 'hanchans':
         return sessionIds.has(row.session_id);
@@ -403,6 +418,31 @@ const MIGRATIONS = [
     });
     if (changes.length) upsert_(rules, changes);
     return '「いつものルール」を「四捨五入・ウマオカあり」にしました。';
+  }],
+  // 公式ルールのプリセット（2026-10-31 施主確認済み）。全グループ共通。
+  // 同じ id か同じ名前のルールが既にあれば入れない（施主が先に作っていた場合に重ねない）
+  ['2026-10-31_presets_mj_mleague', function () {
+    const presets = [
+      {
+        id: 'r_mj_net', name: 'MJ（ネット）', group_id: '', players: 4,
+        start_points: 25000, return_points: 30000, uma: '20,10,-10,-20', uma_oka: true,
+        rounding: 'none', tie_break: 'seat',
+        note: 'セガNET麻雀 MJ の四麻ルール（プレイヤーズサイト）。小数第 1 位まで、同点は起家に近い方が上',
+      },
+      {
+        id: 'r_mleague', name: 'Mリーグ', group_id: '', players: 4,
+        start_points: 25000, return_points: 30000, uma: '30,10,-10,-30', uma_oka: true,
+        rounding: 'none', tie_break: 'split',
+        note: '順位点 +50／+10／−10／−30（オカ込み）。同点は順位点を等分し、端数は起家に近い方',
+      },
+    ];
+    const rules = readTable_('rules');
+    const names = rules.rows.filter((r) => !r.deleted).map((r) => r.name);
+    const adding = presets.filter((p) => !rules.byId[p.id] && names.indexOf(p.name) < 0);
+    if (adding.length) upsert_(rules, adding);
+    return adding.length
+      ? 'ルール「' + adding.map((p) => p.name).join('」「') + '」を全グループ共通で入れました。'
+      : 'ルール「MJ（ネット）」「Mリーグ」は既にあるので入れませんでした。';
   }],
 ];
 

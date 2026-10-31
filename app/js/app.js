@@ -7,9 +7,11 @@ import { sessionsView, sessionFormView, summaryView } from './views/sessions.js'
 import { sessionView, hanchanView, chipsView, shareView } from './views/session.js';
 import { membersView } from './views/members.js';
 import { settingsView } from './views/settings.js';
+import { rulesView, ruleEditView } from './views/rules.js';
+import { homeView } from './views/home.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.1';
 
 const store = new Store({ api, getConfig });
 
@@ -30,6 +32,7 @@ const ctx = {
 
 // [ハッシュの形, 画面, 下のタブ]
 const routes = [
+  [/^#\/home$/, () => homeView(ctx), 'home'],
   [/^#\/sessions\/new$/, () => sessionFormView(ctx, null), 'sessions'],
   [/^#\/session\/([^/]+)\/edit$/, (m) => sessionFormView(ctx, m[1]), 'sessions'],
   [/^#\/session\/([^/]+)\/hanchan\/([^/]+)$/, (m) => hanchanView(ctx, m[1], m[2]), 'sessions'],
@@ -39,6 +42,8 @@ const routes = [
   [/^#\/session\/([^/]+)$/, (m) => sessionView(ctx, m[1]), 'sessions'],
   [/^#\/members$/, () => membersView(ctx), 'members'],
   [/^#\/settings$/, () => settingsView(ctx), 'settings'],
+  [/^#\/rules$/, () => rulesView(ctx), 'settings'],
+  [/^#\/rule\/([^/]+)$/, (m) => ruleEditView(ctx, m[1]), 'settings'],
   [/^/, () => sessionsView(ctx), 'sessions'],
 ];
 

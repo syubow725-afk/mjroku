@@ -4,6 +4,7 @@ import { overlay, addToOutbox, removeSent, countOutbox, indexRows, emptyTables }
 import {
   toPt10, fromPt10, buildSession, sessionChanges, hanchanChanges, sessionHanchans,
   filterSessions, aggregate, scoreEntries, recomputeScoreResults, ruleSnapshot, sessionRule, umaToString,
+  presetRow, sortPresets, copyName, STANDARD_PRESET,
 } from '../app/js/model.js';
 import { parsePt } from '../app/js/calc.js';
 
@@ -213,6 +214,14 @@ test('aggregate：複数の対局をメンバーごとに合算する', () => {
   // 全員の小計の合計は 0、収支の合計はゲーム代の総額だけマイナス
   assert.equal(rows.reduce((n, r) => n + r.subtotal, 0), 0);
   assert.equal(rows.reduce((n, r) => n + r.balance, 0), -9000);
+  // 率（a は 1着・4着・2着）
+  assert.deepEqual(a.rankRates, [1 / 3, 1 / 3, 0, 1 / 3]);
+  assert.equal(a.topRate, 1 / 3);
+  assert.equal(a.rentaiRate, 2 / 3);
+  assert.equal(a.lastAvoidRate, 2 / 3);
+  // pt で入れた半荘は素点が分からないので、飛び率は出さない
+  assert.equal(a.scoredGames, 0);
+  assert.equal(a.tobiRate, null);
 });
 
 const preset = {
@@ -222,7 +231,7 @@ const preset = {
 
 test('ruleSnapshot／sessionRule：対局作成画面の切り替えを保存し、計算用に読み戻す', () => {
   const plain = sessionRule({ rule_snapshot: ruleSnapshot(preset) });
-  assert.deepEqual(plain, { start: 25000, ret: 30000, uma: [200, 100, -100, -200], umaOka: true, rounding: 'none' });
+  assert.deepEqual(plain, { start: 25000, ret: 30000, uma: [200, 100, -100, -200], umaOka: true, rounding: 'none', tieBreak: 'seat' });
 
   const snap = ruleSnapshot(preset, { rounding: 'round4', uma: [300, 100, -100, -300] });
   assert.equal(JSON.parse(snap).uma, '30,10,-10,-30');
@@ -239,6 +248,11 @@ test('ruleSnapshot／sessionRule：対局作成画面の切り替えを保存し
   assert.deepEqual(sessionRule({ rule_snapshot: '' }), standardRule);
   assert.deepEqual(sessionRule({ rule_snapshot: '{壊れ' }), standardRule);
   assert.equal(umaToString([100, 50, -50, -100]), '10,5,-5,-10');
+
+  // 同点の扱いも切り替えを保存する
+  const split = ruleSnapshot(preset, { tieBreak: 'split' });
+  assert.equal(JSON.parse(split).tie_break, 'split');
+  assert.equal(sessionRule({ rule_snapshot: split }).tieBreak, 'split');
 });
 
 test('scoreEntries：列順のまま渡しても席順で計算する（仕様書 6.4 例 1）', () => {
@@ -291,4 +305,62 @@ test('recomputeScoreResults：ルールを変えたら素点の半荘だけ計�
     { id: 'h_1:c', pt: -18, rank: 3 },
     { id: 'h_1:d', pt: -47, rank: 4 },
   ]);
+});
+
+test('presetRow：ルールの行を作る（ウマ・オカなしでも選んだウマは残す）', () => {
+  const row = presetRow({ id: 'r_1', name: '内輪', groupId: 'g', start: 25000, ret: 25000, umaOka: false, uma: [300, 100, -100, -300], rounding: 'round5' });
+  assert.deepEqual(row, {
+    id: 'r_1', name: '内輪', group_id: 'g', players: 4, start_points: 25000, return_points: 25000,
+    uma: '30,10,-10,-30', uma_oka: false, rounding: 'round5', tie_break: 'seat', note: '',
+  });
+  // 対局に保存するときはウマ・オカなしとして扱われる
+  const rule = sessionRule({ rule_snapshot: ruleSnapshot(row) });
+  assert.equal(rule.umaOka, false);
+  assert.deepEqual(rule.uma, [0, 0, 0, 0]);
+  // 標準ルールの行を作り直すと元と同じ
+  const std = presetRow({ id: 'r_standard', name: 'いつものルール', start: 25000, ret: 30000, umaOka: true, uma: [200, 100, -100, -200], rounding: 'round4' });
+  for (const key of ['start_points', 'return_points', 'uma', 'uma_oka', 'rounding', 'tie_break', 'group_id']) {
+    assert.equal(std[key], STANDARD_PRESET[key], key);
+  }
+  // 等分を選んだルール
+  const ml = presetRow({ id: 'r_2', name: 'M', start: 25000, ret: 30000, umaOka: true, uma: [300, 100, -100, -300], rounding: 'none', tieBreak: 'split' });
+  assert.equal(ml.tie_break, 'split');
+});
+
+test('sortPresets：共通ルールを先に、それぞれ作った順', () => {
+  const rows = [
+    { id: 'g2', group_id: 'g', created_at: '2026-10-02' },
+    { id: 's2', group_id: '', created_at: '2026-10-03' },
+    { id: 'g1', group_id: 'g', created_at: '2026-10-01' },
+    { id: 's1', group_id: '', created_at: '2026-09-01' },
+  ];
+  assert.deepEqual(sortPresets(rows).map((r) => r.id), ['s1', 's2', 'g1', 'g2']);
+});
+
+test('copyName：複製の名前が重ならない', () => {
+  assert.equal(copyName('Mリーグ', ['Mリーグ']), 'Mリーグのコピー');
+  assert.equal(copyName('Mリーグ', ['Mリーグ', 'Mリーグのコピー']), 'Mリーグのコピー2');
+  assert.equal(copyName('Mリーグ', ['Mリーグのコピー', 'Mリーグのコピー2']), 'Mリーグのコピー3');
+});
+
+test('aggregate：飛び率は素点で入れた半荘だけで数える', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const session = { id: 's_1', group_id: 'g', date: '2026-11-01', rate: 50, chip_rate: 200, game_fee: 0, rule_snapshot: ruleSnapshot(preset) };
+  const rule = sessionRule(session);
+  const byScore = (hid, seq, scores) => hanchanChanges({
+    sessionId: 's_1', hanchanId: hid, seq, inputMode: 'score',
+    entries: scoreEntries(ids.map((memberId, i) => ({ memberId, seat: i, score: scores[i] })), rule),
+  });
+  const t = tablesFrom(
+    sessionChanges({ session, memberIds: ids }),
+    byScore('h_1', 1, [60000, 30000, 12000, -2000]), // d が飛び
+    byScore('h_2', 2, [40000, 30000, 30000, 0]),     // 0 点ちょうどは飛びに数えない
+    hanchanChanges({ sessionId: 's_1', hanchanId: 'h_3', seq: 3, entries: ids.map((memberId, i) => ({ memberId, pt10: [500, 100, -100, -500][i] })) }),
+  );
+  const d = aggregate(t, ['s_1']).find((r) => r.memberId === 'd');
+  assert.equal(d.games, 3);
+  assert.equal(d.scoredGames, 2);
+  assert.equal(d.tobi, 1);
+  assert.equal(d.tobiRate, 1 / 2);
+  assert.equal(d.lastAvoidRate, 0);
 });

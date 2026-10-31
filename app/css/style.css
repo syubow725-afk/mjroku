@@ -279,7 +279,7 @@ input[type=checkbox] { width: auto; margin: 0 6px 0 0; transform: scale(1.3); }
 .check-row { display: flex; align-items: center; gap: 10px; min-height: 44px; }
 .check { display: flex; align-items: center; flex: 1; font-size: 15px; }
 .check-row select { width: auto; flex: none; }
-.rule-settings > input[type=text] { margin-bottom: 6px; }
+.uma-custom { margin-bottom: 6px; }
 .rule-line { margin: 6px 0 10px; font-size: 13px; color: var(--muted); }
 .rule-line.ng { color: var(--ng); }
 
@@ -293,3 +293,19 @@ input[type=checkbox] { width: auto; margin: 0 6px 0 0; transform: scale(1.3); }
 .entry input[inputmode=numeric] { width: 5.5em; }
 .preview { font-size: 13px; text-align: right; padding-right: 2px; min-height: 0; }
 .preview:empty { display: none; }
+
+/* ---- ルール画面 ---- */
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.tag { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+.save-as { margin: -4px 0 10px; text-align: right; }
+
+/* ---- ホーム（個人成績） ---- */
+.home { display: grid; gap: 12px; }
+.home .card { margin: 0; }
+.hero { text-align: center; }
+.hero-value { font-size: 34px; font-weight: bold; font-variant-numeric: tabular-nums; margin: 2px 0 4px; }
+.stat-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 8px; text-align: center; min-width: 0; }
+.stat-label { font-size: 12px; color: var(--muted); }
+.stat-value { font-size: 18px; font-weight: bold; font-variant-numeric: tabular-nums; margin-top: 2px; white-space: nowrap; }
+.score.ranks td { text-align: center; }

@@ -98,8 +98,73 @@ test('umaLabel／describeRule：設定を 1 行で表す', () => {
 
 test('normalizeRule：シートの行（文字列や欠けた列）を計算用の形にする', () => {
   assert.deepEqual(normalizeRule({ start_points: 25000, return_points: 30000, uma: '20,10,-10,-20', rounding: 'round5' }),
-    { start: 25000, ret: 30000, uma: [200, 100, -100, -200], umaOka: true, rounding: 'round5' });
+    { start: 25000, ret: 30000, uma: [200, 100, -100, -200], umaOka: true, rounding: 'round5', tieBreak: 'seat' });
   // uma_oka が FALSE ならウマ・オカなし。読めない rounding は丸めない
   assert.deepEqual(normalizeRule({ start_points: 25000, return_points: 30000, uma: '', uma_oka: false, rounding: 'x' }),
-    { start: 25000, ret: 30000, uma: [0, 0, 0, 0], umaOka: false, rounding: 'none' });
+    { start: 25000, ret: 30000, uma: [0, 0, 0, 0], umaOka: false, rounding: 'none', tieBreak: 'seat' });
+  // 同点の扱い。読めない値は上家優先
+  assert.equal(normalizeRule({ tie_break: 'split' }).tieBreak, 'split');
+  assert.equal(normalizeRule({ tie_break: 'x' }).tieBreak, 'seat');
+});
+
+// ---------------------------------------------------------------------------
+// 同点を等分（Mリーグ方式）
+// ---------------------------------------------------------------------------
+
+// Mリーグ：25,000 持ち 30,000 返し、ウマ 10-30（オカ込みの順位点 +50／+10／−10／−30）、小数第 1 位まで
+const mleague = normalizeRule({
+  start_points: 25000, return_points: 30000, uma: '30,10,-10,-30', uma_oka: true, rounding: 'none', tie_break: 'split',
+});
+
+test('scoreToPt（等分）：同点がなければ上家優先と同じ', () => {
+  const scores = [45000, 30000, 21600, 3400];
+  assert.deepEqual(scoreToPt(scores, mleague), scoreToPt(scores, { ...mleague, tieBreak: 'seat' }));
+  // 45.0 − 30 + 50 = +65.0、30.0 − 30 + 10 = +10.0、21.6 − 30 − 10 = −18.4、3.4 − 30 − 30 = −56.6
+  assert.deepEqual(scoreToPt(scores, mleague).pts10, [650, 100, -184, -566]);
+});
+
+test('scoreToPt（等分）：2・3 着の同点は +10 と −10 を等分して 0 ずつ', () => {
+  // 起家 40,000、南家・西家 25,000 の同点、北家 10,000
+  const { ranks, pts10 } = scoreToPt([40000, 25000, 25000, 10000], mleague);
+  assert.deepEqual(pts10, [600, -50, -50, -500]);
+  // 着順の記録は上家優先（南家が 2 着）
+  assert.deepEqual(ranks, [1, 2, 3, 4]);
+  // 上家優先なら 2 着 +5.0、3 着 −15.0
+  assert.deepEqual(scoreToPt([40000, 25000, 25000, 10000], { ...mleague, tieBreak: 'seat' }).pts10, [600, 50, -150, -500]);
+});
+
+test('scoreToPt（等分）：トップ同点はオカも分け合う', () => {
+  // 西家・北家 35,000 の同点トップ。順位点 +50 と +10 を等分して +30 ずつ
+  // 35.0 − 30 + 30 = +35.0 が 2 人
+  const { ranks, pts10 } = scoreToPt([20000, 10000, 35000, 35000], mleague);
+  assert.deepEqual(pts10, [-200, -500, 350, 350]);
+  assert.deepEqual(ranks, [3, 4, 1, 2]);
+});
+
+test('scoreToPt（等分）：割り切れない端数は起家に近い人へ 0.1pt ずつ', () => {
+  // ウマ 10-20：3 人同点の 2〜4 着は +10 −10 −20 = −20 を 3 等分 → −6.7、−6.7、−6.6（0.1 の端数 1 つは起家に近い人へ）
+  const rule = { ...normalizeRule({ start_points: 25000, return_points: 30000, uma: '20,10,-10,-20', rounding: 'none' }), tieBreak: 'split' };
+  const { pts10 } = scoreToPt([20000, 20000, 40000, 20000], rule);
+  // 20.0 − 30 = −10.0 に順位点を足す。起家が −16.6、南家・北家が −16.7
+  assert.deepEqual(pts10, [-166, -167, 500, -167]);
+  assert.equal(sum(pts10), 0);
+});
+
+test('scoreToPt（等分）：4 人同点、丸めありでも合計 0', () => {
+  const { pts10 } = scoreToPt([25000, 25000, 25000, 25000], mleague);
+  // 順位点の合計 +50 +10 −10 −30 = +20 を 4 等分して +5 ずつ。25.0 − 30 + 5 = 0
+  assert.deepEqual(pts10, [0, 0, 0, 0]);
+  // 丸めありで同点トップ：丸めのずれ（+1.0）も 2 人で分ける。30.0 − 30 + 30 + 0.5 = +30.5 ずつ
+  const rounded = scoreToPt([30400, 30400, 20100, 19100], { ...mleague, rounding: 'round4' });
+  assert.deepEqual(rounded.pts10, [305, 305, -200, -410]);
+});
+
+test('scoreToPt（等分）：ウマ・オカなしでは同点は同じ pt になるだけ', () => {
+  const off = { ...mleague, umaOka: false, uma: [0, 0, 0, 0] };
+  assert.deepEqual(scoreToPt([40000, 25000, 25000, 10000], off).pts10, [150, 0, 0, -150]);
+});
+
+test('describeRule：等分のときは 1 行表示に出す', () => {
+  assert.equal(describeRule(mleague), '25,000 持ち 30,000 返し・ウマ 10-30・丸めなし・同点は等分');
+  assert.equal(describeRule({ ...mleague, umaOka: false }), '25,000 持ち・ウマオカなし・丸めなし');
 });
