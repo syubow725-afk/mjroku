@@ -186,6 +186,54 @@ function rates({ games, rankCounts, scoredGames, tobi }) {
   };
 }
 
+// 1 人の日ごとの収支（ゲーム代込）を日付順に返す。[{ date: "2026-10-23", balance }]
+// 半荘のない対局と、その人が参加していない対局は入れない（aggregate と同じ数え方）。同じ日に 2 回あれば合算する
+export function memberDailyBalances(tables, sessionIds, memberId) {
+  const byDate = new Map();
+  for (const id of sessionIds) {
+    const model = buildSession(tables, id);
+    if (!model || !model.hanchans.length) continue;
+    const mine = model.summary.find((s) => s.memberId === memberId);
+    if (!mine) continue;
+    byDate.set(model.session.date, (byDate.get(model.session.date) || 0) + mine.balance);
+  }
+  return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, balance]) => ({ date, balance }));
+}
+
+// 年別グラフの点。period が 'all' なら年ごと（最初の年〜最後の年。対局のない年は 0）、
+// '2026' などの年なら 1〜12 月。value はその期間の収支、cumulative はそこまでの累計。
+// 最初に対局した期間より前と、最後に対局した期間より後は cumulative を null にする（折れ線を対局のある範囲だけに引く）
+export function periodTotals(daily, period) {
+  if (!daily.length) return [];
+  const sumBy = (keyOf) => {
+    const m = new Map();
+    for (const d of daily) m.set(keyOf(d.date), (m.get(keyOf(d.date)) || 0) + d.balance);
+    return m;
+  };
+  let keys;
+  let totals;
+  let labelOf;
+  if (period === 'all') {
+    totals = sumBy((date) => date.slice(0, 4));
+    const first = Number(daily[0].date.slice(0, 4));
+    const last = Number(daily[daily.length - 1].date.slice(0, 4));
+    keys = Array.from({ length: last - first + 1 }, (_, i) => String(first + i));
+    labelOf = (key) => `${key}年`;
+  } else {
+    totals = sumBy((date) => (date.slice(0, 4) === period ? date.slice(5, 7) : null));
+    keys = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0'));
+    labelOf = (key) => `${Number(key)}月`;
+  }
+  const played = [...totals.keys()].filter(Boolean).sort();
+  const [firstKey, lastKey] = [played[0], played[played.length - 1]];
+  let running = 0;
+  return keys.map((key) => {
+    const value = totals.get(key) || 0;
+    running += value;
+    return { key, label: labelOf(key), value, cumulative: firstKey != null && key >= firstKey && key <= lastKey ? running : null };
+  });
+}
+
 // ランキング：aggregate の行を value(行) の高い順に並べ、順位を付ける。
 // value が null の人（半荘がなく率が出ない人）は外す。同じ値は同じ順位（1, 1, 3 …）で、並びは半荘数の多い順
 export function rankBy(rows, value) {

@@ -4,7 +4,7 @@ import { overlay, addToOutbox, removeSent, countOutbox, indexRows, emptyTables }
 import {
   toPt10, fromPt10, buildSession, sessionChanges, hanchanChanges, sessionHanchans,
   filterSessions, aggregate, scoreEntries, recomputeScoreResults, ruleSnapshot, sessionRule, umaToString,
-  presetRow, sortPresets, copyName, STANDARD_PRESET, rankBy, rankWithMinimum,
+  presetRow, sortPresets, copyName, STANDARD_PRESET, rankBy, rankWithMinimum, memberDailyBalances, periodTotals,
 } from '../app/js/model.js';
 import { parsePt } from '../app/js/calc.js';
 
@@ -421,4 +421,48 @@ test('aggregate：半荘が 1 回もない対局は数えない（ゲーム代�
     { hanchans: [{ id: 'h_1', deleted: true }] },
   );
   assert.deepEqual(aggregate(deleted, ['s_1']), []);
+});
+
+test('memberDailyBalances：日ごとの収支。半荘のない対局と不参加の対局は入れず、同じ日は合算', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const mk = (sid, date, pts, fee = 0, members = ids) => [
+    sessionChanges({ session: { id: sid, group_id: 'g', date, rate: 50, chip_rate: 200, game_fee: fee }, memberIds: members }),
+    ...(pts ? [hanchanChanges({ sessionId: sid, hanchanId: `${sid}_h`, seq: 1, entries: members.map((memberId, i) => ({ memberId, pt10: pts[i] })) })] : []),
+  ];
+  const t = tablesFrom(
+    ...mk('s_1', '2026-10-23', [500, 100, -100, -500], 4000),
+    ...mk('s_2', '2026-10-23', [100, 0, 0, -100]),
+    ...mk('s_3', '2026-09-01', [-200, 200, 0, 0]),
+    ...mk('s_4', '2026-11-01', null, 4000),                    // 半荘なし
+    ...mk('s_5', '2026-11-02', [100, -100, 0, 0], 0, ['b', 'c', 'd', 'e']), // a は不参加
+  );
+  assert.deepEqual(memberDailyBalances(t, ['s_1', 's_2', 's_3', 's_4', 's_5'], 'a'), [
+    { date: '2026-09-01', balance: -1000 },
+    { date: '2026-10-23', balance: 2500 - 1000 + 500 },
+  ]);
+});
+
+test('periodTotals：年なら 1〜12 月、全期間なら年ごと。累計は最後の対局まで', () => {
+  const daily = [
+    { date: '2025-12-20', balance: 300 },
+    { date: '2026-01-10', balance: -500 },
+    { date: '2026-01-24', balance: 200 },
+    { date: '2026-03-07', balance: 1000 },
+  ];
+  const year = periodTotals(daily, '2026');
+  assert.equal(year.length, 12);
+  assert.deepEqual(year.slice(0, 4).map((p) => [p.label, p.value, p.cumulative]),
+    [['1月', -300, -300], ['2月', 0, -300], ['3月', 1000, 700], ['4月', 0, null]]);
+  assert.equal(year[11].cumulative, null);
+  // 年の累計はその年の 1 月から（前の年は足さない）
+  const all = periodTotals(daily, 'all');
+  assert.deepEqual(all.map((p) => [p.label, p.value, p.cumulative]), [['2025年', 300, 300], ['2026年', 700, 1000]]);
+  // 対局のない年は 0 で埋める
+  assert.deepEqual(periodTotals([{ date: '2023-05-01', balance: 100 }, { date: '2025-05-01', balance: -50 }], 'all').map((p) => p.value), [100, 0, -50]);
+  // その年に対局がなければ全部 0、累計なし
+  assert.ok(periodTotals(daily, '2024').every((p) => p.value === 0 && p.cumulative === null));
+  assert.deepEqual(periodTotals([], 'all'), []);
+  // 最初に対局した月より前も累計なし（10 月から始めた年は 1〜9 月に線を引かない）
+  const autumn = periodTotals([{ date: '2026-10-23', balance: -4600 }], '2026');
+  assert.deepEqual(autumn.map((p) => p.cumulative), [null, null, null, null, null, null, null, null, null, -4600, null, null]);
 });

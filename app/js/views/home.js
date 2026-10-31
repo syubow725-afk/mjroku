@@ -3,7 +3,8 @@
 import { h, formatMoney, signClass } from '../util.js';
 import { formatPt } from '../calc.js';
 import { getConfig } from '../config.js';
-import { memberName, filterSessions, aggregate } from '../model.js';
+import { memberName, filterSessions, aggregate, memberDailyBalances, periodTotals } from '../model.js';
+import { balanceChart } from './chart.js';
 
 // 表示するメンバーと期間。画面を移っても残す（アプリを閉じたら初期値に戻る）
 //   memberId：null なら設定の「自分の名前」のメンバー
@@ -38,6 +39,8 @@ export function homeView(ctx) {
   const range = state.period === 'all' ? {} : { from: `${state.period}-01-01`, to: `${state.period}-12-31` };
   const sessions = filterSessions(all, range);
   const stats = aggregate(t, sessions.map((s) => s.id)).find((r) => r.memberId === state.memberId);
+  // 年別グラフ：全期間なら年ごと、年を選んだらその年の月ごと
+  const points = periodTotals(memberDailyBalances(t, sessions.map((s) => s.id), state.memberId), state.period);
 
   const change = (key) => (e) => { state[key] = e.target.value; ctx.refresh(); };
   const memberSelect = h('select', { onchange: change('memberId'), 'aria-label': '表示するメンバー' },
@@ -51,11 +54,11 @@ export function homeView(ctx) {
     live: true,
     body: h('div', null,
       h('div', { class: 'filter-row' }, memberSelect, periodSelect),
-      stats ? statsBody(stats) : h('p', { class: 'empty' }, `${memberName(t, state.memberId)}さんの対局はまだありません`)),
+      stats ? statsBody(stats, points, state.period) : h('p', { class: 'empty' }, `${memberName(t, state.memberId)}さんの対局はまだありません`)),
   };
 }
 
-function statsBody(s) {
+function statsBody(s, points, period) {
   const tile = (label, value, cls = '') => h('div', { class: 'stat' },
     h('div', { class: 'stat-label' }, label),
     h('div', { class: `stat-value ${cls}` }, value));
@@ -65,6 +68,10 @@ function statsBody(s) {
       h('div', { class: 'stat-label' }, '収支（ゲーム代込）'),
       h('div', { class: `hero-value ${signClass(s.balance)}` }, formatMoney(s.balance)),
       h('div', { class: 'muted small' }, 'ゲーム代別 ', h('span', { class: signClass(s.subtotal) }, formatMoney(s.subtotal)))),
+
+    h('section', { class: 'card' },
+      h('h2', null, period === 'all' ? '年ごとの収支' : `${period}年の収支`),
+      balanceChart(points, { unit: period === 'all' ? '年ごと' : '月ごと' })),
 
     h('section', { class: 'stat-grid' },
       tile('総スコア', formatPt(s.pt10), signClass(s.pt10)),
