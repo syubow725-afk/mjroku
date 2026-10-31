@@ -24,11 +24,12 @@ async function request(url, init) {
 }
 
 // body を文字列で渡すと Content-Type は text/plain になり、
-// ブラウザの事前確認（CORS preflight）が飛ばないので GAS でも受けられる
+// ブラウザの事前確認（CORS preflight）が飛ばないので GAS でも受けられる。
+// group_id は表示中のグループ。管理者の合言葉ではこれで開くグループが決まり、メンバーの合言葉では GAS が無視する
 async function post(config, body) {
   const data = await request(config.gasUrl, {
     method: 'POST',
-    body: JSON.stringify({ ...body, passcode: config.passcode }),
+    body: JSON.stringify({ group_id: config.groupId || undefined, ...body, passcode: config.passcode }),
   });
   if (!data.ok) {
     if (data.error === 'bad_passcode') throw new Error('合言葉が違います');

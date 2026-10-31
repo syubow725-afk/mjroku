@@ -76,6 +76,18 @@ a { color: var(--accent); }
   font-size: 16px;
 }
 .sync { font-size: 12px; opacity: 0.9; white-space: nowrap; }
+/* 見た目は帯に溶け込ませる。文字は 16px（iOS が選ぶときに拡大しないように） */
+.group-switch {
+  width: auto;
+  max-width: 40%;
+  flex: none;
+  padding: 3px 6px;
+  background: rgba(255, 255, 255, 0.15);
+  color: var(--accent-text);
+  border-color: rgba(255, 255, 255, 0.45);
+  border-radius: 6px;
+}
+.group-switch option { color: var(--text); background: var(--surface); }
 .sync.ng { background: var(--ng); color: #fff; padding: 2px 6px; border-radius: 6px; opacity: 1; }
 
 /* ---- 下のタブ ---- */

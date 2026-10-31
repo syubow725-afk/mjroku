@@ -1,7 +1,7 @@
 // 麻雀録 アプリの入口：画面の切り替え（#/… のハッシュで決める）と同期のきっかけづくり
 import { Store } from './store.js';
 import * as api from './api.js';
-import { getConfig, isConfigured } from './config.js';
+import { getConfig, setConfig, isConfigured, getKeys, setKeys, keyEntry, mergeKey, groupChoices } from './config.js';
 import { h } from './util.js';
 import { sessionsView, sessionFormView, summaryView } from './views/sessions.js';
 import { sessionView, hanchanView, chipsView, shareView } from './views/session.js';
@@ -14,9 +14,18 @@ import { setupUpdates } from './update.js';
 import { adminView, adminGroupView } from './views/admin.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.6.1';
 
-const store = new Store({ api, getConfig });
+const store = new Store({
+  api,
+  getConfig,
+  choices: () => groupChoices(getKeys()),
+  // 接続できたら、その合言葉で開けるグループと、表示中のグループを覚える
+  remember: (config, res) => {
+    setKeys(mergeKey(getKeys(), keyEntry(config.passcode, res)));
+    setConfig({ groupId: res.group.id });
+  },
+});
 
 const ctx = {
   store,
@@ -25,6 +34,7 @@ const ctx = {
   // フォームの保存後など、戻るでフォームに戻らないよう履歴を置き換える
   replace: (hash) => { location.replace(hash); },
   refresh: () => render(),
+  switchGroup: (groupId) => switchGroup(groupId),
   notFound: () => ({
     title: '見つかりません',
     back: '#/sessions',
@@ -57,11 +67,13 @@ const main = document.getElementById('main');
 const titleEl = document.getElementById('title');
 const backEl = document.getElementById('back');
 const syncEl = document.getElementById('sync-status');
+const switchEl = document.getElementById('group-switch');
 
 // 画面は { title, body, back?, live?, update? } を返す。
 //   live   … データが変わったら作り直して良い画面（入力欄のない一覧など）
 //   update … 作り直さずに一部だけ最新にする関数（入力中の内容を消さないため）
 let current = null;
+let currentTab = 'sessions';
 
 // onlyIfChanged：作り直した結果が今の画面と同じなら差し替えない（タップ中のボタンを消さないため）
 function render({ onlyIfChanged = false } = {}) {
@@ -76,6 +88,7 @@ function render({ onlyIfChanged = false } = {}) {
     titleEl.textContent = current.title;
     backEl.hidden = !current.back;
     backEl.onclick = () => ctx.go(current.back);
+    currentTab = tab;
     for (const a of document.querySelectorAll('.tabbar a')) a.classList.toggle('active', a.dataset.tab === tab);
     break;
   }
@@ -83,7 +96,8 @@ function render({ onlyIfChanged = false } = {}) {
 }
 
 function renderSyncStatus() {
-  const pending = store.pendingCount();
+  renderGroupSwitch();
+  const pending = store.totalPending(); // 表示中でないグループの送信待ちも数える
   // 帯が緑なので、正常時は色を付けず、問題があるときだけ赤くする
   let text = '同期済';
   let cls = '';
@@ -94,6 +108,37 @@ function renderSyncStatus() {
   syncEl.textContent = text;
   syncEl.className = `sync ${cls}`;
 }
+
+// 切り替えの一覧は、中身が変わったときだけ作り直す（選んでいる最中に閉じないように）
+let switchShown = '';
+function renderGroupSwitch() {
+  const choices = groupChoices(getKeys());
+  const active = getConfig().groupId;
+  const shown = JSON.stringify([choices.map((c) => [c.groupId, c.name]), active]);
+  if (shown === switchShown) return;
+  switchShown = shown;
+  switchEl.hidden = choices.length < 2;
+  switchEl.replaceChildren(...choices.map((c) => h('option', { value: c.groupId, selected: c.groupId === active }, c.name)));
+}
+
+// 一覧の画面は切り替えた先のグループでそのまま見せる。
+// 対局の中や入力中の画面は前のグループのものなので、そのタブの一覧に戻す
+const KEEP_ON_SWITCH = /^#\/(home|ranking|sessions|summary|members|settings|rules|admin)$/;
+
+function switchGroup(groupId) {
+  const choice = groupChoices(getKeys()).find((c) => c.groupId === groupId);
+  const config = getConfig();
+  if (!choice || (choice.passcode === config.passcode && groupId === config.groupId)) return Promise.resolve();
+  setConfig({ passcode: choice.passcode, groupId });
+  const done = store.switchTo(); // ここで 'data' が出て、live・update のある画面は最新になる
+  if (!KEEP_ON_SWITCH.test(location.hash)) ctx.go(`#/${currentTab}`);
+  else if (!current?.live && !current?.update) render();
+  // 初めて開くグループは、読み込みが終わってから中身が出る
+  return done.then(() => {
+    if (KEEP_ON_SWITCH.test(location.hash) && !current?.live && !current?.update) render();
+  });
+}
+switchEl.addEventListener('change', () => switchGroup(switchEl.value));
 
 store.subscribe((kind) => {
   if (kind === 'data' && current?.live) {
@@ -115,7 +160,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') store.sync();
 });
 setInterval(() => {
-  if (store.pendingCount() > 0) store.sync();
+  if (store.totalPending() > 0) store.sync();
 }, 60000);
 
 if (!isConfigured() && !location.hash) location.hash = '#/settings';

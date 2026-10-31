@@ -1,6 +1,7 @@
-// 設定画面：自分の名前、GAS の URL、合言葉、グループ（役割・規定半荘数）、管理への入口、同期の状況
+// 設定画面：自分の名前、GAS の URL、合言葉（端末にいくつでも持てる）、グループ（役割・規定半荘数）、管理への入口、同期の状況
 import { h, setChildren } from '../util.js';
-import { getConfig, setConfig } from '../config.js';
+import * as api from '../api.js';
+import { getConfig, setConfig, getKeys, setKeys, keyEntry, mergeKey, groupChoices } from '../config.js';
 
 export function settingsView(ctx) {
   const { store } = ctx;
@@ -11,54 +12,80 @@ export function settingsView(ctx) {
     type: 'url', inputmode: 'url', value: config.gasUrl, autocomplete: 'off',
     placeholder: 'https://script.google.com/macros/s/…/exec',
   });
-  const pass = h('input', { type: 'password', value: config.passcode, autocomplete: 'off' });
+  // 合言葉の欄は、新しく足すとき・付け替えるときだけ入れる（持っている合言葉は下の一覧に出る）
+  const pass = h('input', { type: 'password', autocomplete: 'off' });
+  const passLabel = h('span');
   const message = h('p', { class: 'result' });
+  const show = (cls, text) => { message.className = `result ${cls}`; message.textContent = text; };
+
+  // 合言葉を GAS で確かめてから一覧に足し、そのグループを開く。
+  // 同じグループの古い合言葉（付け替える前のもの）は mergeKey が外す
+  const addPasscode = async (passcode) => {
+    let res;
+    try {
+      res = await api.load({ gasUrl: getConfig().gasUrl, passcode });
+    } catch (err) {
+      show('ng', `接続できません：${err.message}`);
+      return;
+    }
+    setKeys(mergeKey(getKeys(), keyEntry(passcode, res)));
+    pass.value = '';
+    await ctx.switchGroup(res.group.id);
+    update();
+    show('ok', `「${res.group.name}」に接続しました${res.role === 'admin' ? '（管理者の合言葉）' : ''}`);
+  };
 
   const saveButton = h('button', {
     type: 'button',
     onclick: async () => {
-      // 送信待ちは今の合言葉のグループの入力なので、合言葉を入れ替える前に送り切る。
-      // 残したまま別のグループの合言葉にすると、GAS が「グループ外」として拒み、送信待ちが詰まる
-      const changing = pass.value.trim() !== getConfig().passcode || url.value.trim() !== getConfig().gasUrl;
-      if (changing && store.pendingCount() > 0) {
-        message.className = 'result ng';
-        message.textContent = `送信待ちが ${store.pendingCount()} 件あります。今の合言葉のまま「今すぐ同期」で送ってから入れ替えてください。`;
+      const before = getConfig();
+      const gasUrl = url.value.trim();
+      const passcode = pass.value.trim();
+      // 送信待ちは今の URL の GAS に送るもの。URL を変える前に送り切る
+      if (gasUrl !== before.gasUrl && store.totalPending() > 0) {
+        show('ng', `送信待ちが ${store.totalPending()} 件あります。今の URL のまま「今すぐ同期」で送ってから変えてください。`);
         return;
       }
-      setConfig({ myName: name.value.trim(), gasUrl: url.value.trim(), passcode: pass.value.trim() });
-      if (!url.value.trim() || !pass.value.trim()) {
-        message.className = 'result';
-        message.textContent = '名前を保存しました（URL と合言葉がないと同期しません）';
+      setConfig({ myName: name.value.trim(), gasUrl });
+      if (!gasUrl || (!passcode && !before.passcode)) {
+        show('', '名前を保存しました（URL と合言葉がないと同期しません）');
         return;
       }
       saveButton.disabled = true;
-      message.className = 'result';
-      message.textContent = '接続中…';
-      await store.sync();
-      saveButton.disabled = false;
-      if (store.error) {
-        message.className = 'result ng';
-        message.textContent = `接続できません：${store.error}`;
-      } else {
-        message.className = 'result ok';
-        message.textContent = `「${store.group.name}」に接続しました`;
+      show('', '接続中…');
+      try {
+        if (passcode) {
+          await addPasscode(passcode);
+          return;
+        }
+        await store.sync();
+        if (store.error) show('ng', `接続できません：${store.error}`);
+        else show('ok', `「${store.group.name}」に接続しました`);
+      } finally {
+        saveButton.disabled = false;
       }
     },
   }, '保存して接続');
 
+  const keyList = h('div'); // 持っている合言葉の一覧
   const status = h('dl', { class: 'kv' });
   const actions = h('div', { class: 'button-row' });
-  const roleArea = h('div', { class: 'stack' }); // 役割とグループで変わる部分（合言葉を入れ替えたら書き直す）
+  const roleArea = h('div', { class: 'stack' }); // 役割とグループで変わる部分（グループを切り替えたら書き直す）
 
-  // 同期の状況と、役割で変わる部分は、画面を作り直さずに最新にする（入力中の欄を消さないため）
+  // 同期の状況と、合言葉・役割で変わる部分は、画面を作り直さずに最新にする（入力中の欄を消さないため）
   const update = () => {
+    const keys = getKeys();
+    passLabel.textContent = keys.length ? '合言葉を足す・付け替える' : '合言葉';
+    pass.placeholder = keys.length ? '別のグループの合言葉など' : '';
+    setChildren(keyList, keys.length ? keyCard(ctx, keys, show, update) : null);
     setChildren(roleArea, ...roleSections(store));
     const pending = store.pendingCount();
     setChildren(status,
       h('dt', null, 'グループ'), h('dd', null, store.group?.name || '—'),
       h('dt', null, '役割'), h('dd', null, store.group ? (store.isAdmin ? '管理者' : 'メンバー') : '—'),
       h('dt', null, '最終同期'), h('dd', null, store.lastSync ? new Date(store.lastSync).toLocaleString('ja-JP') : '—'),
-      h('dt', null, '送信待ち'), h('dd', null, `${pending} 件`),
+      h('dt', null, '送信待ち'), h('dd', null, `${pending} 件`,
+        store.otherPending > 0 ? `（ほかのグループに ${store.otherPending} 件）` : null),
       store.error ? [h('dt', null, 'エラー'), h('dd', { class: 'ng' }, store.error)] : null,
     );
     setChildren(actions,
@@ -68,7 +95,7 @@ export function settingsView(ctx) {
         ? h('button', {
             type: 'button', class: 'danger',
             onclick: () => {
-              if (confirm(`送信待ちの ${pending} 件を捨てますか？\nこの端末で入力して、まだ届いていない内容が消えます。`)) store.discardOutbox();
+              if (confirm(`「${store.group?.name || 'このグループ'}」の送信待ちの ${pending} 件を捨てますか？\nこの端末で入力して、まだ届いていない内容が消えます。`)) store.discardOutbox();
             },
           }, '送信待ちを捨てる')
         : null,
@@ -83,15 +110,79 @@ export function settingsView(ctx) {
       h('section', { class: 'card' },
         h('label', { class: 'field' }, h('span', null, '自分の名前'), name),
         h('label', { class: 'field' }, h('span', null, 'GAS ウェブアプリ URL'), url),
-        h('label', { class: 'field' }, h('span', null, '合言葉'), pass),
+        h('label', { class: 'field' }, passLabel, pass),
         saveButton,
         message),
+      keyList,
       roleArea,
       h('section', { class: 'card' }, h('h2', null, '同期'), status, actions),
       h('p', { class: 'version' }, `麻雀録 v${ctx.version}`),
       versionCheck(ctx),
     ),
   };
+}
+
+// この端末の合言葉の一覧。合言葉そのものは出さず、開けるグループで見分ける
+function keyCard(ctx, keys, show, update) {
+  const { store } = ctx;
+  const active = getConfig().passcode;
+  const remove = async (key) => {
+    const rest = keys.filter((k) => k !== key);
+    // この合言葉を外すと、この端末で開けなくなるグループ
+    const left = new Set(groupChoices(rest).map((c) => c.groupId));
+    const lost = key.groups.filter((g) => !left.has(g.id));
+    const pending = lost.filter((g) => store.pendingFor(g.id) > 0);
+    if (pending.length) {
+      show('ng', `「${pending.map((g) => g.name).join('」「')}」に送信待ちがあります。送ってから外してください。`);
+      return;
+    }
+    const what = lost.length ? `\n外すと「${lost.map((g) => g.name).join('」「')}」はこの端末で見られなくなります。` : '';
+    if (!confirm(`${keyLabel(key)}をこの端末から外しますか？${what}`)) return;
+    setKeys(rest);
+    if (key.passcode === active) {
+      // 使っていた合言葉なら、残りの最初のグループに切り替える。残りがなければ未接続にする
+      const next = groupChoices(rest)[0];
+      if (next) {
+        await ctx.switchGroup(next.groupId);
+      } else {
+        setConfig({ passcode: '', groupId: '' });
+        await store.switchTo();
+      }
+    }
+    // 見られなくなったグループのデータは端末から消す
+    store.forgetGroups(lost.map((g) => g.id));
+    update();
+    show('ok', `${keyLabel(key)}を外しました`);
+  };
+  return h('section', { class: 'card' },
+    h('h2', null, 'この端末の合言葉'),
+    h('ul', { class: 'list' }, keys.map((k) => h('li', { class: 'list-item' },
+      h('div', { class: 'list-main' },
+        h('div', { class: 'card-head' },
+          h('strong', null, keyLabel(k)),
+          k.passcode === active ? h('span', { class: 'tag' }, '使用中') : null),
+        h('div', { class: 'list-sub' }, keySub(store, k))),
+      h('button', { type: 'button', class: 'small secondary', onclick: () => remove(k) }, '外す')))),
+    groupChoices(keys).length > 1
+      ? h('p', { class: 'muted small' }, '開けるグループが 2 つ以上あるので、画面上の欄でグループを切り替えられます。')
+      : null);
+}
+
+function keyLabel(k) {
+  if (k.role === 'admin') return '管理者の合言葉';
+  return k.groups[0] ? `「${k.groups[0].name}」の合言葉` : '合言葉（未接続）';
+}
+
+function keySub(store, k) {
+  const notes = [];
+  if (k.role === 'admin') notes.push(`全グループ（${k.groups.map((g) => g.name).join('・') || '—'}）`);
+  else if (!k.groups.length) notes.push('次の同期でグループが分かります');
+  for (const g of k.groups) {
+    const n = store.pendingFor(g.id);
+    if (n > 0 && g.id !== store.slotId) notes.push(`「${g.name}」の送信待ち ${n} 件`);
+    if (store.otherErrors[g.id]) notes.push(`「${g.name}」を送れません：${store.otherErrors[g.id]}`);
+  }
+  return notes.join('・') || 'メンバー';
 }
 
 // ルール・グループの設定・管理への入口（役割とグループで変わる）

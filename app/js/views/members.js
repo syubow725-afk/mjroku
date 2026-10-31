@@ -8,6 +8,7 @@ export function membersView(ctx) {
   if (!store.group) {
     return {
       title: 'メンバー',
+      live: true, // 同期できたら作り直す
       body: h('p', { class: 'empty' }, 'まだ GAS と同期できていません。', h('a', { href: '#/settings' }, '設定'), 'を確認してください。'),
     };
   }
