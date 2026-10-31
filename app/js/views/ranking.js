@@ -48,7 +48,7 @@ export function rankingView(ctx) {
       h('span', { class: `place place-${place}` }, place ?? '—'),
       h('div', { class: 'list-main' },
         h('div', { class: 'rank-name' }, name),
-        h('div', { class: 'list-sub' }, `${row.games} 半荘・${row.sessions} 日`)),
+        h('div', { class: 'list-sub' }, `${row.games} 半荘・${row.days} 日`)),
       h('span', { class: `rank-value ${colored ? signClass(v) : ''}` }, v == null ? '—' : format(v)));
   };
   const items = ranked.map(item);

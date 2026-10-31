@@ -121,7 +121,7 @@ export function summaryView(ctx) {
       num(r.subtotal, formatMoney),
       num(r.pt10, formatPt),
       num(r.chips, (v) => (v > 0 ? `+${v}` : String(v))),
-      h('td', null, r.sessions),
+      h('td', null, r.days),
       h('td', null, r.games),
       r.rankCounts.map((n) => h('td', null, n)),
       h('td', null, pct(r.rankCounts[0], r.games)),

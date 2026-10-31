@@ -135,7 +135,8 @@ export function filterSessions(sessions, { from = '', to = '', rule = '' } = {})
 // 複数の対局をメンバーごとに合算する（本家の「全件集計」「合算集計」、ホーム、ランキングで使う）。
 // 戻り値は収支（ゲーム代込）の高い順。率は半荘がなければ null
 // 半荘が 1 回もない対局（作っただけ・入力前）は数えない。ゲーム代だけが引かれて収支や日数に入らないように
-//   sessions … 参加した対局の数（日数）／games … 打った半荘の数（5 人以上の対局の抜け番は数えない）
+//   sessions … 参加した対局の数／days … 対局した日の数（同じ日に 2 つあれば 1 日）
+//   games … 打った半荘の数（5 人以上の対局の抜け番は数えない）
 //   pt10 … 総スコア／chips … 総チップ（枚）／subtotal … 収支（ゲーム代別）／balance … 収支（ゲーム代込）
 //   rankRates … 1〜4 着の率／topRate … トップ率／rentaiRate … 連対率（1・2 着）／lastAvoidRate … ラス回避率
 //   scoredGames … 素点が分かる半荘の数／tobi … そのうち素点がマイナスだった回数／tobiRate … 飛び率
@@ -147,10 +148,11 @@ export function aggregate(tables, sessionIds) {
     if (!model || !model.hanchans.length) continue;
     for (const s of model.summary) {
       const a = byMember.get(s.memberId) || {
-        memberId: s.memberId, sessions: 0, games: 0, rankCounts: [0, 0, 0, 0],
+        memberId: s.memberId, sessions: 0, dates: new Set(), games: 0, rankCounts: [0, 0, 0, 0],
         pt10: 0, chips: 0, subtotal: 0, balance: 0, scoredGames: 0, tobi: 0,
       };
       a.sessions += 1;
+      a.dates.add(model.session.date);
       a.games += s.games;
       s.rankCounts.forEach((n, i) => { a.rankCounts[i] += n; });
       a.pt10 += s.pt10;
@@ -169,7 +171,7 @@ export function aggregate(tables, sessionIds) {
     }
   }
   return [...byMember.values()]
-    .map((a) => ({ ...a, ...rates(a) }))
+    .map(({ dates, ...a }) => ({ ...a, days: dates.size, ...rates(a) }))
     .sort((x, y) => y.balance - x.balance);
 }
 
@@ -186,7 +188,7 @@ function rates({ games, rankCounts, scoredGames, tobi }) {
   };
 }
 
-// 1 人の日ごとの収支（ゲーム代込）を日付順に返す。[{ date: "2026-10-23", balance }]
+// 1 人の日ごとの収支（ゲーム代込）を日付順に返す。[{ date: "2026-10-23", balance, sessionIds }]
 // 半荘のない対局と、その人が参加していない対局は入れない（aggregate と同じ数え方）。同じ日に 2 回あれば合算する
 export function memberDailyBalances(tables, sessionIds, memberId) {
   const byDate = new Map();
@@ -195,9 +197,60 @@ export function memberDailyBalances(tables, sessionIds, memberId) {
     if (!model || !model.hanchans.length) continue;
     const mine = model.summary.find((s) => s.memberId === memberId);
     if (!mine) continue;
-    byDate.set(model.session.date, (byDate.get(model.session.date) || 0) + mine.balance);
+    const day = byDate.get(model.session.date) || { date: model.session.date, balance: 0, sessionIds: [] };
+    day.balance += mine.balance;
+    day.sessionIds.push(id);
+    byDate.set(day.date, day);
   }
-  return [...byDate.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([date, balance]) => ({ date, balance }));
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// カレンダーの 1 か月分。日曜始まりの週ごとに、日付（"2026-10-01"）か、前後の月の分は null を並べる
+export function monthGrid(year, month) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const first = new Date(year, month - 1, 1).getDay();
+  const days = new Date(year, month, 0).getDate();
+  const cells = [
+    ...Array(first).fill(null),
+    ...Array.from({ length: days }, (_, i) => `${year}-${pad(month)}-${pad(i + 1)}`),
+  ];
+  while (cells.length % 7) cells.push(null);
+  return Array.from({ length: cells.length / 7 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
+}
+
+// 相手ごとの成績：memberId の人と同じ半荘を打った相手ごとに集める。同卓の多い順
+//   games … 同じ半荘を打った回数／wins・losses … 着順で相手より上・下だった回数
+//   myPt10・theirPt10 … その半荘での自分・相手の pt 合計／myAvgRank・theirAvgRank … その半荘での平均着順
+export function opponentStats(tables, sessionIds, memberId) {
+  const byOpponent = new Map();
+  for (const id of sessionIds) {
+    for (const { results } of sessionHanchans(tables, id)) {
+      const mine = results[memberId];
+      if (!mine) continue;
+      for (const r of Object.values(results)) {
+        if (r.member_id === memberId) continue;
+        const o = byOpponent.get(r.member_id) || {
+          memberId: r.member_id, games: 0, wins: 0, losses: 0, myPt10: 0, theirPt10: 0, myRankSum: 0, theirRankSum: 0,
+        };
+        o.games += 1;
+        if (mine.rank < r.rank) o.wins += 1;
+        else if (mine.rank > r.rank) o.losses += 1;
+        o.myPt10 += toPt10(mine.pt);
+        o.theirPt10 += toPt10(r.pt);
+        o.myRankSum += mine.rank;
+        o.theirRankSum += r.rank;
+        byOpponent.set(r.member_id, o);
+      }
+    }
+  }
+  return [...byOpponent.values()]
+    .map(({ myRankSum, theirRankSum, ...o }) => ({
+      ...o,
+      winRate: o.wins / o.games,
+      myAvgRank: myRankSum / o.games,
+      theirAvgRank: theirRankSum / o.games,
+    }))
+    .sort((a, b) => b.games - a.games || b.winRate - a.winRate);
 }
 
 // 年別グラフの点。period が 'all' なら年ごと（最初の年〜最後の年。対局のない年は 0）、

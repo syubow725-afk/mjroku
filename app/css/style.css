@@ -354,3 +354,22 @@ input[type=checkbox] { width: auto; margin: 0 6px 0 0; transform: scale(1.3); }
 .key-line { display: inline-block; width: 16px; height: 2px; background: var(--chart-line); border-radius: 1px; }
 .chart-table summary { font-size: 13px; color: var(--accent); cursor: pointer; }
 .chart-table table { margin-top: 6px; width: 100%; }
+
+/* ---- 収支カレンダー ---- */
+.calendar { display: grid; gap: 8px; }
+.cal-head { display: flex; align-items: center; gap: 8px; }
+.cal-title { flex: 1; text-align: center; }
+.cal-head button { min-width: 44px; font-size: 18px; }
+.cal-grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.cal-grid th { font-size: 11px; font-weight: normal; color: var(--muted); padding: 2px 0; }
+.cal-grid th.sun { color: var(--neg); }
+.cal-grid th.sat { color: var(--pos); }
+.cal-grid td { height: 44px; padding: 1px; vertical-align: top; text-align: center; }
+.cal-day { display: block; font-size: 12px; color: var(--muted); }
+.cal-cell { width: 100%; height: 100%; padding: 2px 0; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); display: grid; align-content: start; gap: 1px; }
+.cal-played .cal-day { color: var(--text); font-weight: bold; }
+.cal-value { font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; letter-spacing: -0.02em; }
+.cal-detail { min-height: 1.5em; font-size: 14px; text-align: center; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; }
+table.score.opponents th, table.score.opponents td { padding: 8px 5px; }
+table.score.opponents td { text-align: right; white-space: nowrap; min-width: 0; font-size: 14px; }
+table.score.opponents thead th { font-size: 12px; }

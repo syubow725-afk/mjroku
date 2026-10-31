@@ -4,7 +4,7 @@ import { overlay, addToOutbox, removeSent, countOutbox, indexRows, emptyTables }
 import {
   toPt10, fromPt10, buildSession, sessionChanges, hanchanChanges, sessionHanchans,
   filterSessions, aggregate, scoreEntries, recomputeScoreResults, ruleSnapshot, sessionRule, umaToString,
-  presetRow, sortPresets, copyName, STANDARD_PRESET, rankBy, rankWithMinimum, memberDailyBalances, periodTotals,
+  presetRow, sortPresets, copyName, STANDARD_PRESET, rankBy, rankWithMinimum, memberDailyBalances, periodTotals, monthGrid, opponentStats,
 } from '../app/js/model.js';
 import { parsePt } from '../app/js/calc.js';
 
@@ -197,6 +197,7 @@ test('aggregate：複数の対局をメンバーごとに合算する', () => {
   const rows = aggregate(t, ['s_1', 's_2']);
   const a = rows.find((r) => r.memberId === 'a');
   assert.equal(a.sessions, 2);
+  assert.equal(a.days, 2);
   assert.equal(a.games, 3);
   assert.deepEqual(a.rankCounts, [1, 1, 0, 1]); // 1着、4着、2着
   assert.equal(a.avgRank, (1 + 4 + 2) / 3);
@@ -437,8 +438,8 @@ test('memberDailyBalances：日ごとの収支。半荘のない対局と不参�
     ...mk('s_5', '2026-11-02', [100, -100, 0, 0], 0, ['b', 'c', 'd', 'e']), // a は不参加
   );
   assert.deepEqual(memberDailyBalances(t, ['s_1', 's_2', 's_3', 's_4', 's_5'], 'a'), [
-    { date: '2026-09-01', balance: -1000 },
-    { date: '2026-10-23', balance: 2500 - 1000 + 500 },
+    { date: '2026-09-01', balance: -1000, sessionIds: ['s_3'] },
+    { date: '2026-10-23', balance: 2500 - 1000 + 500, sessionIds: ['s_1', 's_2'] },
   ]);
 });
 
@@ -465,4 +466,57 @@ test('periodTotals：年なら 1〜12 月、全期間なら年ごと。累計は
   // 最初に対局した月より前も累計なし（10 月から始めた年は 1〜9 月に線を引かない）
   const autumn = periodTotals([{ date: '2026-10-23', balance: -4600 }], '2026');
   assert.deepEqual(autumn.map((p) => p.cumulative), [null, null, null, null, null, null, null, null, null, -4600, null, null]);
+});
+
+test('monthGrid：日曜始まりで 1 か月を週ごとに並べる', () => {
+  // 2026 年 10 月 1 日は木曜、31 日まで
+  const oct = monthGrid(2026, 10);
+  assert.equal(oct.length, 5);
+  assert.deepEqual(oct[0], [null, null, null, null, '2026-10-01', '2026-10-02', '2026-10-03']);
+  assert.deepEqual(oct[4], ['2026-10-25', '2026-10-26', '2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31']);
+  // 2026 年 2 月は日曜始まり・28 日でちょうど 4 週
+  assert.equal(monthGrid(2026, 2).length, 4);
+  assert.equal(monthGrid(2026, 2)[0][0], '2026-02-01');
+  // うるう年
+  assert.equal(monthGrid(2028, 2).flat().filter(Boolean).pop(), '2028-02-29');
+});
+
+test('opponentStats：同じ半荘を打った相手ごとに、勝ち負け・pt・平均着順を集める', () => {
+  const session = { id: 's_1', group_id: 'g', date: '2026-10-23', rate: 50, chip_rate: 200, game_fee: 0 };
+  const members = ['a', 'b', 'c', 'd', 'e'];
+  const hc = (hid, seq, pts) => hanchanChanges({
+    sessionId: 's_1', hanchanId: hid, seq,
+    entries: members.map((memberId, i) => ({ memberId, pt10: pts[i] })).filter((e) => e.pt10 != null),
+  });
+  const t = tablesFrom(
+    sessionChanges({ session, memberIds: members }),
+    hc('h_1', 1, [500, 100, -100, -500, null]), // a 1着、e は抜け番
+    hc('h_2', 2, [-500, 500, null, 100, -100]),  // a 4着、c は抜け番
+    hc('h_3', 3, [null, 500, 100, -100, -500]),  // a は抜け番（a の相手別には入らない）
+  );
+  const rows = opponentStats(t, ['s_1'], 'a');
+  const byId = Object.fromEntries(rows.map((r) => [r.memberId, r]));
+  assert.deepEqual(Object.keys(byId).sort(), ['b', 'c', 'd', 'e']);
+  // b とは 2 回同卓：1 回目は a が上、2 回目は b が上
+  assert.deepEqual([byId.b.games, byId.b.wins, byId.b.losses, byId.b.winRate], [2, 1, 1, 0.5]);
+  assert.equal(byId.b.myPt10, 0);
+  assert.equal(byId.b.theirPt10, 600);
+  assert.equal(byId.b.myAvgRank, 2.5);
+  assert.equal(byId.b.theirAvgRank, 1.5);
+  // e とは h_2 の 1 回だけ（a 4着、e 3着）
+  assert.deepEqual([byId.e.games, byId.e.wins, byId.e.losses], [1, 0, 1]);
+  // 同卓の多い順
+  assert.deepEqual(rows.map((r) => r.games), [2, 2, 1, 1]);
+});
+
+test('aggregate：日数は対局した日の数（同じ日の対局 2 つは 1 日）', () => {
+  const ids = ['a', 'b', 'c', 'd'];
+  const mk = (sid, date) => [
+    sessionChanges({ session: { id: sid, group_id: 'g', date, rate: 50, chip_rate: 200, game_fee: 0 }, memberIds: ids }),
+    hanchanChanges({ sessionId: sid, hanchanId: `${sid}_h`, seq: 1, entries: ids.map((memberId, i) => ({ memberId, pt10: [500, 100, -100, -500][i] })) }),
+  ];
+  const t = tablesFrom(...mk('s_1', '2026-10-31'), ...mk('s_2', '2026-10-31'), ...mk('s_3', '2026-10-29'));
+  const a = aggregate(t, ['s_1', 's_2', 's_3']).find((r) => r.memberId === 'a');
+  assert.equal(a.sessions, 3);
+  assert.equal(a.days, 2);
 });

@@ -12,7 +12,7 @@ import { homeView } from './views/home.js';
 import { rankingView } from './views/ranking.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.4.4';
+const APP_VERSION = '0.4.5';
 
 const store = new Store({ api, getConfig });
 
