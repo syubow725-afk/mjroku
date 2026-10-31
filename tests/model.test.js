@@ -546,3 +546,73 @@ test('aggregate：日数は対局した日の数（同じ日の対局 2 つは 1
   assert.equal(a.sessions, 3);
   assert.equal(a.days, 2);
 });
+
+// ---------------------------------------------------------------------------
+// 検算 3：2026/10/02（5 人打ち・12 半荘。レート 50、チップ 200、ゲーム代 10,000）
+// 本家の対局画面の値（施主提供）。実名は使わず a〜e に置き換える。null は抜け番
+// ---------------------------------------------------------------------------
+
+const KENZAN3 = {
+  members: ['a', 'b', 'c', 'd', 'e'],
+  pts: [
+    [-57, 8, -14, 63, null],
+    [41, null, -18, -29, 6],
+    [null, -21, 57, 7, -43],
+    [-7, 45, -51, null, 13],
+    [-38, -21, null, 56, 3],
+    [-16, 9, -38, 45, null],
+    [-51, null, -15, 8, 58],
+    [null, 68, 10, -25, -53],
+    [-52, -25, 67, null, 10],
+    [16, 61, -21, -56, null],
+    [8, -13, 42, -37, null],
+    [46, -19, -36, 9, null],
+  ],
+  chips: [-15, -7, -2, 22, 2],
+};
+
+function kenzan3Tables() {
+  const { members, pts, chips } = KENZAN3;
+  const session = { id: 's_1002', group_id: 'g', date: '2026-10-02', rate: 50, chip_rate: 200, game_fee: 10000 };
+  return tablesFrom(
+    sessionChanges({ session, memberIds: members }),
+    ...pts.map((row, i) => hanchanChanges({
+      sessionId: session.id, hanchanId: `h_${i + 1}`, seq: i + 1,
+      entries: members.map((memberId, j) => ({ memberId, pt10: row[j] == null ? null : row[j] * 10 })).filter((e) => e.pt10 != null),
+    })),
+    { participants: members.map((m, i) => ({ id: `${session.id}:${m}`, chips: chips[i] })) },
+  );
+}
+
+test('検算 3（10/02・5 人打ち）：計・小計・収支が本家と一致し、ゲーム代は各 2,000', () => {
+  // 入力の確かめ：どの半荘も 4 人で、合計 0
+  for (const row of KENZAN3.pts) {
+    assert.equal(row.filter((v) => v != null).length, 4);
+    assert.equal(row.reduce((n, v) => n + (v ?? 0), 0), 0);
+  }
+  const { summary, hanchans } = buildSession(kenzan3Tables(), 's_1002');
+  assert.equal(hanchans.length, 12);
+  const row = (key) => summary.map((s) => s[key]);
+  assert.deepEqual(row('pt10'), [-1100, 920, -170, 410, -60]);
+  assert.deepEqual(row('chips'), [-15, -7, -2, 22, 2]);
+  assert.deepEqual(row('fee'), [2000, 2000, 2000, 2000, 2000]);
+  assert.deepEqual(row('subtotal'), [-8500, 3200, -1250, 6450, 100]);
+  assert.deepEqual(row('balance'), [-10500, 1200, -3250, 4450, -1900]);
+  // 抜け番は半荘数に入らない（a 10・b 10・c 11・d 10・e 7。合計 48 ＝ 12 半荘 × 4 人）
+  assert.deepEqual(row('games'), [10, 10, 11, 10, 7]);
+});
+
+test('検算 3（10/02）：a から見た相手別は、同卓した半荘での自分の pt と収支（メモの見込みどおり）', () => {
+  const rows = opponentStats(kenzan3Tables(), ['s_1002'], 'a');
+  const byId = Object.fromEntries(rows.map((r) => [r.memberId, r]));
+  // [同卓半荘数, 同卓半荘の自分 pt（pt10）, 収支（pt × 50 ＋ チップ −15 × 200）]
+  assert.deepEqual([byId.b.games, byId.b.myPt10, byId.b.money], [8, -1000, -8000]);
+  assert.deepEqual([byId.c.games, byId.c.myPt10, byId.c.money], [9, -720, -6600]);
+  assert.deepEqual([byId.d.games, byId.d.myPt10, byId.d.money], [8, -510, -5550]);
+  assert.deepEqual([byId.e.games, byId.e.myPt10, byId.e.money], [5, -1070, -8350]);
+  // チップは同卓した対局の分を丸ごと（この日は 1 対局なので全員 −15）
+  assert.deepEqual(rows.map((r) => r.chips), [-15, -15, -15, -15]);
+  // 同卓の多い順：c（9 回）が先頭、e（5 回）が最後
+  assert.equal(rows[0].memberId, 'c');
+  assert.equal(rows[rows.length - 1].memberId, 'e');
+});
