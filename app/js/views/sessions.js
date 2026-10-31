@@ -66,19 +66,24 @@ export function sessionsView(ctx) {
         h('input', { type: 'date', value: filter.to, onchange: change('to') }))
     : null;
 
-  // 対局カード：日付・タイトル・半荘数と、参加者ごとの収支
-  const items = sessions.map((s) => {
-    const model = buildSession(t, s.id);
-    return h('li', null, h('a', { class: 'list-item link', href: `#/session/${s.id}` },
+  // 対局カード：日付・タイトル・半荘数と、参加者ごとの収支。
+  // 半荘のない対局は成績の集計に入らないので、収支の代わりにそう出す
+  const models = sessions.map((s) => buildSession(t, s.id));
+  const items = models.map(({ session: s, summary, hanchans }) => {
+    const empty = !hanchans.length;
+    return h('li', null, h('a', { class: `list-item link${empty ? ' no-hanchan' : ''}`, href: `#/session/${s.id}` },
       h('div', { class: 'list-main' },
         h('div', { class: 'card-head' },
           h('strong', null, formatDate(s.date)),
           h('span', { class: 'card-title' }, s.title || ''),
-          h('span', { class: 'muted small' }, `${model.hanchans.length} 半荘`)),
-        h('div', { class: 'balances' }, model.summary.map((r) => h('span', null,
-          h('span', { class: 'muted' }, memberName(t, r.memberId)), ' ',
-          h('span', { class: signClass(r.balance) }, formatMoney(r.balance))))))));
+          empty ? h('span', { class: 'tag' }, '半荘なし') : h('span', { class: 'muted small' }, `${hanchans.length} 半荘`)),
+        empty
+          ? h('div', { class: 'list-sub' }, `成績の集計に入りません（${summary.map((r) => memberName(t, r.memberId)).join('・')}）`)
+          : h('div', { class: 'balances' }, summary.map((r) => h('span', null,
+              h('span', { class: 'muted' }, memberName(t, r.memberId)), ' ',
+              h('span', { class: signClass(r.balance) }, formatMoney(r.balance))))))));
   });
+  const counted = models.filter((m) => m.hanchans.length).length;
 
   return {
     title: '対局',
@@ -89,7 +94,7 @@ export function sessionsView(ctx) {
         ? h('div', { class: 'filter' },
             h('div', { class: 'filter-row' }, periodSelect, ruleSelect),
             range,
-            h('a', { class: 'button secondary block', href: '#/summary' }, `集計（${sessions.length} 対局）`))
+            h('a', { class: 'button secondary block', href: '#/summary' }, `集計（${counted} 対局）`))
         : null,
       items.length
         ? h('ul', { class: 'list' }, items)
@@ -101,7 +106,8 @@ export function sessionsView(ctx) {
 export function summaryView(ctx) {
   const { store } = ctx;
   const t = store.tables();
-  const sessions = filteredSessions(store);
+  // 半荘のない対局は集計に入らない（aggregate が外す）ので、件数からも外す
+  const sessions = filteredSessions(store).filter((s) => buildSession(t, s.id)?.hanchans.length);
   const rows = aggregate(t, sessions.map((s) => s.id));
 
   const num = (v, format = String) => h('td', { class: signClass(v) }, format(v));

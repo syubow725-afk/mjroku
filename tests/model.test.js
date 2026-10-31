@@ -398,3 +398,27 @@ test('rankWithMinimum：規定半荘数に届かない人は順位を付けず�
   assert.deepEqual(zero.ranked.map((x) => x.row.memberId), ['c', 'b', 'a', 'e']);
   assert.deepEqual(zero.below.map((x) => x.row.memberId), ['d']);
 });
+
+test('aggregate：半荘が 1 回もない対局は数えない（ゲーム代だけ引かれないように）', () => {
+  const session = { id: 's_1', group_id: 'g', date: '2026-11-01', rate: 50, chip_rate: 200, game_fee: 4000 };
+  const empty = { id: 's_2', group_id: 'g', date: '2026-11-02', rate: 50, chip_rate: 200, game_fee: 4000 };
+  const ids = ['a', 'b', 'c', 'd'];
+  const t = tablesFrom(
+    sessionChanges({ session, memberIds: ids }),
+    hanchanChanges({ sessionId: 's_1', hanchanId: 'h_1', seq: 1, entries: ids.map((memberId, i) => ({ memberId, pt10: [500, 100, -100, -500][i] })) }),
+    sessionChanges({ session: empty, memberIds: ids }),
+  );
+  const rows = aggregate(t, ['s_1', 's_2']);
+  const a = rows.find((r) => r.memberId === 'a');
+  assert.equal(a.sessions, 1);
+  assert.equal(a.balance, 50 * 50 - 1000);
+  // 半荘のない対局だけなら誰も出ない
+  assert.deepEqual(aggregate(t, ['s_2']), []);
+  // 半荘をすべて削除した対局も同じ
+  const deleted = tablesFrom(
+    sessionChanges({ session, memberIds: ids }),
+    hanchanChanges({ sessionId: 's_1', hanchanId: 'h_1', seq: 1, entries: ids.map((memberId, i) => ({ memberId, pt10: [500, 100, -100, -500][i] })) }),
+    { hanchans: [{ id: 'h_1', deleted: true }] },
+  );
+  assert.deepEqual(aggregate(deleted, ['s_1']), []);
+});

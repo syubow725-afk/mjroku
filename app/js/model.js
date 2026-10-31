@@ -134,6 +134,7 @@ export function filterSessions(sessions, { from = '', to = '', rule = '' } = {})
 
 // 複数の対局をメンバーごとに合算する（本家の「全件集計」「合算集計」、ホーム、ランキングで使う）。
 // 戻り値は収支（ゲーム代込）の高い順。率は半荘がなければ null
+// 半荘が 1 回もない対局（作っただけ・入力前）は数えない。ゲーム代だけが引かれて収支や日数に入らないように
 //   sessions … 参加した対局の数（日数）／games … 打った半荘の数（5 人以上の対局の抜け番は数えない）
 //   pt10 … 総スコア／chips … 総チップ（枚）／subtotal … 収支（ゲーム代別）／balance … 収支（ゲーム代込）
 //   rankRates … 1〜4 着の率／topRate … トップ率／rentaiRate … 連対率（1・2 着）／lastAvoidRate … ラス回避率
@@ -143,7 +144,7 @@ export function aggregate(tables, sessionIds) {
   const byMember = new Map();
   for (const id of sessionIds) {
     const model = buildSession(tables, id);
-    if (!model) continue;
+    if (!model || !model.hanchans.length) continue;
     for (const s of model.summary) {
       const a = byMember.get(s.memberId) || {
         memberId: s.memberId, sessions: 0, games: 0, rankCounts: [0, 0, 0, 0],
