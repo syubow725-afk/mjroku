@@ -8,6 +8,9 @@
 // 同期の順番：outbox を save で送る → 成功した行を outbox から外す → load で server を最新にする。
 // 失敗したら outbox はそのまま残し、次の機会（電波の復帰、アプリを開き直したとき、一定間隔）に再送する。
 
+// 率のランキングの規定半荘数の初期値（グループの設定が空のとき）
+export const DEFAULT_MIN_GAMES = 10;
+
 export const SHEETS = ['members', 'group_members', 'rules', 'sessions', 'participants', 'hanchans', 'results'];
 
 export function emptyTables() {
@@ -65,7 +68,9 @@ export class Store {
     this.getConfig = getConfig;
     this.server = emptyTables();
     this.outbox = emptyTables();
-    this.group = null;      // { id, name }
+    this.group = null;      // { id, name, min_games, has_passcode }
+    this.role = 'member';   // 'member'／'admin'（GAS が合言葉から決める。表示の切り替えにだけ使い、権限の判定は GAS が行う）
+    this.groups = null;     // 管理者のときだけ、全グループの一覧
     this.lastSync = null;   // 最後に load できた時刻
     this.syncing = false;
     this.error = null;
@@ -81,6 +86,8 @@ export class Store {
         this.server = { ...emptyTables(), ...saved.server };
         this.outbox = { ...emptyTables(), ...saved.outbox };
         this.group = saved.group || null;
+        this.role = saved.role || 'member';
+        this.groups = saved.groups || null;
         this.lastSync = saved.lastSync || null;
       }
     } catch { /* 読めなければ空から始める（GAS から読み直せる） */ }
@@ -89,7 +96,7 @@ export class Store {
   persist() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        server: this.server, outbox: this.outbox, group: this.group, lastSync: this.lastSync,
+        server: this.server, outbox: this.outbox, group: this.group, role: this.role, groups: this.groups, lastSync: this.lastSync,
       }));
     } catch { /* 容量不足などで保存できなくても画面上のデータは生きている */ }
   }
@@ -117,6 +124,24 @@ export class Store {
   // 論理削除されていない行。filter で絞り込める
   list(sheet, filter = () => true) {
     return Object.values(this.tables()[sheet]).filter((r) => !r.deleted && filter(r));
+  }
+
+  get isAdmin() {
+    return this.role === 'admin';
+  }
+
+  // グループ共通の設定「率のランキングの規定半荘数」。未設定なら 10
+  get minGames() {
+    const n = this.group?.min_games;
+    return Number.isInteger(n) && n >= 0 ? n : DEFAULT_MIN_GAMES;
+  }
+
+  // グループの管理（管理者だけ）の結果を反映する。res：save_group／set_group_passcode の応答
+  applyGroups(res) {
+    this.groups = res.groups;
+    if (this.group && res.group.id === this.group.id) this.group = res.group;
+    this.persist();
+    this.emit('data');
   }
 
   pendingCount() {
@@ -189,11 +214,13 @@ export class Store {
       }
       const res = await this.api.load(config);
       // 中身が前回と同じなら画面を作り直さない（タップ中のボタンを消さないため）
-      const json = JSON.stringify([res.group, res.data]);
+      const json = JSON.stringify([res.group, res.role, res.groups, res.data]);
       changed = json !== this.loadedJson;
       this.loadedJson = json;
       this.server = indexRows(res.data);
       this.group = res.group;
+      this.role = res.role === 'admin' ? 'admin' : 'member';
+      this.groups = res.groups || null;
       this.lastSync = new Date().toISOString();
       this.error = null;
       this.persist();

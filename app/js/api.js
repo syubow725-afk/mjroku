@@ -30,7 +30,11 @@ async function post(config, body) {
     method: 'POST',
     body: JSON.stringify({ ...body, passcode: config.passcode }),
   });
-  if (!data.ok) throw new Error(data.error === 'bad_passcode' ? '合言葉が違います' : data.error);
+  if (!data.ok) {
+    if (data.error === 'bad_passcode') throw new Error('合言葉が違います');
+    if (data.error === 'forbidden') throw new Error('管理者の合言葉が必要です');
+    throw new Error(data.error);
+  }
   return data;
 }
 
@@ -49,4 +53,14 @@ export function load(config) {
 // records: { シート名: [行, …] }
 export function save(config, records) {
   return post(config, { action: 'save', records });
+}
+
+// グループの追加（id なし）と名前・設定の変更（管理者だけ）。group：{ id?, name, min_games }
+export function saveGroup(config, group) {
+  return post(config, { action: 'save_group', group });
+}
+
+// グループの合言葉の設定（管理者だけ）
+export function setGroupPasscode(config, groupId, newPasscode) {
+  return post(config, { action: 'set_group_passcode', group_id: groupId, new_passcode: newPasscode });
 }

@@ -1,4 +1,4 @@
-// メンバー画面：一覧・追加・名前の変更・削除
+// メンバー画面：一覧・追加・名前の変更・削除（削除は管理者だけ。GAS の authorize_ が判定する）
 import { h, newId } from '../util.js';
 
 export function membersView(ctx) {
@@ -47,8 +47,9 @@ export function membersView(ctx) {
         ? h('ul', { class: 'list' }, members.map((m) => h('li', { class: 'list-item' },
             h('span', { class: 'list-main' }, m.name),
             h('button', { type: 'button', class: 'small secondary', onclick: () => rename(m) }, '名前'),
-            h('button', { type: 'button', class: 'small danger', onclick: () => remove(m) }, '削除'))))
+            store.isAdmin ? h('button', { type: 'button', class: 'small danger', onclick: () => remove(m) }, '削除') : null)))
         : h('p', { class: 'empty' }, 'まだメンバーがいません'),
+      store.isAdmin ? null : h('p', { class: 'muted small' }, 'メンバーの削除は管理者が行います。'),
     ),
   };
 }

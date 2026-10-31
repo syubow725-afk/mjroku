@@ -170,8 +170,9 @@ export function sessionFormView(ctx, sessionId) {
     presets,
     initialPresetId: initialPreset.id,
     initialRule: existing ? sessionRule(existing) : null,
-    // その場で調整した設定を、このグループ限定の新しいルールとして保存する（共通にするのはルール画面で）
-    onSaveAsPreset: (r) => {
+    // その場で調整した設定を、このグループ限定の新しいルールとして保存する（共通にするのはルール画面で）。
+    // ルールの追加は管理者だけなので、メンバーにはボタンを出さない（調整は対局のルールとしては使える）
+    onSaveAsPreset: !store.isAdmin ? null : (r) => {
       const name = prompt('ルールの名前', `${r.preset.name}（調整）`)?.trim();
       if (!name) return null;
       if (store.list('rules').some((x) => x.name === name)) {

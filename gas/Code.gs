@@ -6,12 +6,21 @@
  *
  * API（詳細は docs/02_データ設計.md の 4 章）
  *   GET  ?action=ping                         疎通確認（合言葉不要）
- *   POST { action: 'load', passcode }          合言葉のグループのデータを全部返す
- *   POST { action: 'save', passcode, records } { シート名: [行, …] } を id で上書き／追記する
+ *   POST { action: 'load', passcode, group_id? }            合言葉のグループのデータを全部返す
+ *   POST { action: 'save', passcode, group_id?, records }   { シート名: [行, …] } を id で上書き／追記する
+ *   POST { action: 'save_group', passcode, group }          グループの追加・名前と設定の変更（管理者だけ）
+ *   POST { action: 'set_group_passcode', passcode, group_id, new_passcode }  グループの合言葉の設定（管理者だけ）
+ *   group_id は管理者がどのグループを見るかの指定。メンバーの合言葉では無視する（合言葉のグループに決まる）
+ *
+ * 役割（段階4。docs/05_次の作業メモ「権限の分け方」）
+ *   member … グループの合言葉。そのグループのデータだけ読み書きできる。ルールの変更、メンバーの削除、
+ *             削除した対局・メンバーの復元はできない
+ *   admin  … 管理者の合言葉（施主専用。1 つだけ）。全グループを選んで読み書きでき、グループと合言葉も管理できる
  *
  * スプレッドシートのメニュー「麻雀録」
- *   シートを準備     … シートと見出しを作る（何度実行しても良い。足りない列だけ足す）
- *   合言葉を設定     … グループの合言葉を入れる。シートにはハッシュだけを保存する
+ *   シートを準備           … シートと見出しを作る（何度実行しても良い。足りない列だけ足す）
+ *   合言葉を設定           … グループの合言葉を入れる。シートにはハッシュだけを保存する
+ *   管理者の合言葉を設定   … 管理者の合言葉を入れる。スクリプトのプロパティにハッシュだけを保存する
  */
 
 // ---------------------------------------------------------------------------
@@ -20,7 +29,8 @@
 // ---------------------------------------------------------------------------
 
 const TABLES = {
-  groups: [['id', 's'], ['name', 's'], ['passcode_hash', 's']],
+  // min_games：グループ共通の設定「率のランキングの規定半荘数」（空なら 10）
+  groups: [['id', 's'], ['name', 's'], ['passcode_hash', 's'], ['min_games', 'n']],
   members: [['id', 's'], ['name', 's'], ['aliases', 's']],
   group_members: [['id', 's'], ['group_id', 's'], ['member_id', 's']],
   rules: [
@@ -81,7 +91,7 @@ function doGet(e) {
 function doPost(e) {
   try {
     const req = JSON.parse(e.postData.contents);
-    const auth = authenticate_(req.passcode);
+    const auth = authenticate_(req.passcode, req.group_id);
     if (!auth) {
       Utilities.sleep(1000); // 総当たりを遅くする
       return json_({ ok: false, error: 'bad_passcode' });
@@ -91,6 +101,13 @@ function doPost(e) {
     }
     if (req.action === 'save') {
       return json_({ ok: true, saved: save_(auth, req.records || {}), server_time: new Date().toISOString() });
+    }
+    if (req.action === 'save_group' || req.action === 'set_group_passcode') {
+      if (auth.role !== 'admin') return json_({ ok: false, error: 'forbidden' });
+      const group = req.action === 'save_group'
+        ? saveGroup_(req.group || {})
+        : setGroupPasscode_(req.group_id, req.new_passcode);
+      return json_({ ok: true, group: publicGroup_(group), groups: listGroups_() });
     }
     return json_({ ok: false, error: 'unknown action: ' + req.action });
   } catch (err) {
@@ -115,22 +132,49 @@ function hash_(groupId, passcode) {
   return bytes.map((b) => ('0' + (b & 0xff).toString(16)).slice(-2)).join('');
 }
 
+// 管理者の合言葉のハッシュを置くスクリプトのプロパティ。
+// ハッシュはグループ ID の代わりに 'admin' と組み合わせる（グループ ID は g_ で始まるので重ならない）
+const ADMIN_HASH_KEY = 'admin_passcode_hash';
+
 // 合言葉を照合し、{ group, role } を返す。一致しなければ null。
-// role は今は 'member' だけ。段階4で「管理者用の合言葉」を足したら、ここで 'admin' を返す
-// （方針は docs/05_次の作業メモ「権限の分け方」。判定は必ず GAS で行い、アプリの表示に頼らない）
-function authenticate_(passcode) {
+//   管理者の合言葉なら role 'admin'。group は groupId で選んだグループ（なければ「いつもの」か最初のグループ）
+//   グループの合言葉なら role 'member'。group は合言葉のグループで、groupId は無視する
+// 判定は必ず GAS で行い、アプリの表示に頼らない（docs/05_次の作業メモ「権限の分け方」）
+function authenticate_(passcode, groupId) {
   const code = String(passcode || '').trim();
   if (!code) return null;
-  const groups = readTable_('groups').rows;
-  const group = groups.find((g) => !g.deleted && g.passcode_hash && g.passcode_hash === hash_(g.id, code));
+  const groups = readTable_('groups').rows.filter((g) => !g.deleted);
+  const adminHash = PropertiesService.getScriptProperties().getProperty(ADMIN_HASH_KEY);
+  if (adminHash && adminHash === hash_('admin', code)) {
+    const group = groups.find((g) => g.id === groupId) || groups.find((g) => g.id === 'g_itsumo') || groups[0];
+    return group ? { group: group, role: 'admin' } : null;
+  }
+  const group = groups.find((g) => g.passcode_hash && g.passcode_hash === hash_(g.id, code));
   return group ? { group: group, role: 'member' } : null;
 }
 
 // 権限の判定。保存する 1 行ごとに呼ぶ（sheet：シート名、row：保存後の行、existing：上書きされる既存の行）。
-// 今は合言葉が通れば全員同じ権限なので常に許可する。
-// 段階4で管理者だけに絞る操作（ルールの追加・編集、削除した対局の復元など）は、ここに条件を足す
+// 管理者は何でもできる。メンバーには次を許さない：
+//   ・ルールの追加・編集・削除（対局ごとの丸め・ウマの調整は対局の rule_snapshot に入るので、ここには来ない）
+//   ・メンバーの削除
+//   ・削除した対局・メンバーの復元
+// 参加者・成績の行は、対局の編集で外した人を戻すときに削除を取り消すことがあるので、復元を止めない
 function authorize_(auth, sheet, row, existing) {
+  if (auth.role === 'admin') return true;
+  if (sheet === 'rules') return false;
+  const wasDeleted = Boolean(existing && existing.deleted);
+  if (sheet === 'members' && row.deleted && !wasDeleted) return false;
+  if ((sheet === 'sessions' || sheet === 'members') && wasDeleted && !row.deleted) return false;
   return true;
+}
+
+// アプリに返すグループの形（passcode_hash は返さず、合言葉が設定済みかだけを返す）
+function publicGroup_(g) {
+  return { id: g.id, name: g.name, min_games: g.min_games == null ? null : g.min_games, has_passcode: Boolean(g.passcode_hash) };
+}
+
+function listGroups_() {
+  return readTable_('groups').rows.filter((g) => !g.deleted).map(publicGroup_);
 }
 
 // ---------------------------------------------------------------------------
@@ -151,8 +195,10 @@ function load_(auth) {
   const hanchanIds = new Set(hanchans.map((r) => r.id));
 
   return {
-    group: { id: group.id, name: group.name }, // passcode_hash は返さない
+    group: publicGroup_(group),
     role: auth.role,
+    // 管理者には切り替え先のグループの一覧を返す。メンバーには自分のグループしか見せない
+    groups: auth.role === 'admin' ? listGroups_() : null,
     data: {
       members: t.members.filter((r) => memberIds.has(r.id)),
       group_members: groupMembers,
@@ -348,6 +394,7 @@ function onOpen() {
     .createMenu('麻雀録')
     .addItem('シートを準備', 'setupSheets')
     .addItem('合言葉を設定', 'setPasscode')
+    .addItem('管理者の合言葉を設定', 'setAdminPasscode')
     .addToUi();
 }
 
@@ -487,13 +534,104 @@ function setPasscode() {
     ui.alert('4 文字以上にしてください。');
     return;
   }
-  // 他のグループと同じ合言葉だと、どちらのグループか判別できなくなる
-  const clash = active.some((g) => g.id !== group.id && g.passcode_hash === hash_(g.id, passcode));
+  const clash = passcodeClash_(passcode, group.id, false);
   if (clash) {
-    ui.alert('他のグループと同じ合言葉は使えません。');
+    ui.alert(clash);
     return;
   }
 
   upsert_(groups, [{ id: group.id, passcode_hash: hash_(group.id, passcode) }]);
   ui.alert('「' + group.name + '」の合言葉を設定しました。前の合言葉はもう使えません。');
+}
+
+// 合言葉がほかと重なっていれば理由を返す。重ならなければ null。
+// 重なると、どのグループの人か（管理者か）を判別できなくなるため
+//   exceptGroupId … 合言葉を変えようとしているグループ（そのグループの前の合言葉とは重なって良い）
+//   forAdmin      … 管理者の合言葉を変えようとしているとき true
+function passcodeClash_(passcode, exceptGroupId, forAdmin) {
+  const groups = readTable_('groups').rows.filter((g) => !g.deleted);
+  if (groups.some((g) => g.id !== exceptGroupId && g.passcode_hash && g.passcode_hash === hash_(g.id, passcode))) {
+    return '他のグループと同じ合言葉は使えません。';
+  }
+  const adminHash = PropertiesService.getScriptProperties().getProperty(ADMIN_HASH_KEY);
+  if (!forAdmin && adminHash && adminHash === hash_('admin', passcode)) return '管理者の合言葉と同じものは使えません。';
+  return null;
+}
+
+// 管理者の合言葉を設定する（施主専用。スプレッドシートのメニューからだけ設定できる）。
+// スクリプトのプロパティにハッシュだけを保存し、平文はどこにも残さない
+function setAdminPasscode() {
+  const ui = SpreadsheetApp.getUi();
+  const r = ui.prompt('管理者の合言葉を設定',
+    '管理者（施主専用）の合言葉（8 文字以上）。グループの合言葉とは別のものにしてください。', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  const passcode = r.getResponseText().trim();
+  if (passcode.length < 8) {
+    ui.alert('8 文字以上にしてください。');
+    return;
+  }
+  const clash = passcodeClash_(passcode, null, true);
+  if (clash) {
+    ui.alert(clash);
+    return;
+  }
+  PropertiesService.getScriptProperties().setProperty(ADMIN_HASH_KEY, hash_('admin', passcode));
+  ui.alert('管理者の合言葉を設定しました。前の管理者の合言葉はもう使えません。');
+}
+
+// ---------------------------------------------------------------------------
+// グループの管理（管理者だけ。doPost で役割を確かめてから呼ぶ）
+// ---------------------------------------------------------------------------
+
+// グループの追加（id なし）と、名前・設定の変更（id あり）。保存後のグループの行を返す
+//   group … { id?, name, min_games? }。min_games が空なら規定値（アプリ側で 10）
+function saveGroup_(group) {
+  const name = String(group.name || '').trim();
+  if (!name) throw new Error('グループの名前がありません');
+  const raw = group.min_games;
+  const minGames = raw === '' || raw === undefined || raw === null ? null : Number(raw);
+  if (minGames !== null && !(Number.isInteger(minGames) && minGames >= 0)) {
+    throw new Error('規定半荘数は 0 以上の整数にしてください');
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const groups = readTable_('groups');
+    // 段階4で足した列。シートが古いままだと黙って捨てられるので、先に知らせる
+    if (groups.header.indexOf('min_games') < 0) throw new Error('groups シートに min_games 列がありません（メニュー「麻雀録 → シートを準備」を実行）');
+    if (group.id && (!groups.byId[group.id] || groups.byId[group.id].deleted)) throw new Error('グループがありません: ' + group.id);
+    const id = group.id || newGroupId_();
+    if (groups.rows.some((g) => !g.deleted && g.id !== id && g.name === name)) throw new Error('同じ名前のグループがあります: ' + name);
+    upsert_(groups, [{ id: id, name: name, min_games: minGames }]);
+    return readTable_('groups').byId[id];
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// グループの合言葉を設定する。メニューの「合言葉を設定」と同じ決まり（4 文字以上、ほかと重ならない）
+function setGroupPasscode_(groupId, newPasscode) {
+  const passcode = String(newPasscode || '').trim();
+  if (passcode.length < 4) throw new Error('合言葉は 4 文字以上にしてください');
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    const groups = readTable_('groups');
+    const group = groups.byId[groupId];
+    if (!group || group.deleted) throw new Error('グループがありません: ' + groupId);
+    const clash = passcodeClash_(passcode, groupId, false);
+    if (clash) throw new Error(clash);
+    upsert_(groups, [{ id: groupId, passcode_hash: hash_(groupId, passcode) }]);
+    return readTable_('groups').byId[groupId];
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// グループの ID：g_ ＋ 英小文字・数字 10 桁（アプリの newId と同じ形）
+function newGroupId_() {
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+  let id = 'g_';
+  for (let i = 0; i < 10; i++) id += chars.charAt(Math.floor(Math.random() * chars.length));
+  return id;
 }

@@ -2,7 +2,7 @@
 // 本家は毎朝の集計だが、本アプリは開いた時点のデータで計算する
 import { h, signClass } from '../util.js';
 import { formatPt } from '../calc.js';
-import { getConfig, getMinGames } from '../config.js';
+import { getConfig } from '../config.js';
 import { memberName, filterSessions, aggregate, rankBy, rankWithMinimum } from '../model.js';
 import { formatRate, formatChips } from './home.js';
 
@@ -30,7 +30,7 @@ export function rankingView(ctx) {
   const rows = aggregate(t, filterSessions(all, range).map((s) => s.id));
 
   const [, label, value, format, colored, isRate] = METRICS.find(([key]) => key === state.metric);
-  const minGames = getMinGames();
+  const minGames = store.minGames; // グループ共通の設定
   const { ranked, below } = isRate ? rankWithMinimum(rows, value, minGames) : { ranked: rankBy(rows, value), below: [] };
   const myName = getConfig().myName;
 
@@ -67,7 +67,7 @@ export function rankingView(ctx) {
             h('ul', { class: 'list ranking' }, below.map(item)))
         : null,
       isRate
-        ? h('p', { class: 'muted small' }, `率は打った半荘の数で割っています。順位は ${minGames} 半荘以上の人だけに付けます（`, h('a', { href: '#/settings' }, '設定'), 'で変えられます）。')
+        ? h('p', { class: 'muted small' }, `率は打った半荘の数で割っています。順位は ${minGames} 半荘以上の人だけに付けます（グループの設定。管理者が`, h('a', { href: '#/settings' }, '設定'), 'で変えられます）。')
         : null),
   };
 }

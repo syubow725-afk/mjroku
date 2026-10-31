@@ -11,9 +11,10 @@ import { rulesView, ruleEditView } from './views/rules.js';
 import { homeView } from './views/home.js';
 import { rankingView } from './views/ranking.js';
 import { setupUpdates } from './update.js';
+import { adminView, adminGroupView } from './views/admin.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 
 const store = new Store({ api, getConfig });
 
@@ -47,6 +48,8 @@ const routes = [
   [/^#\/settings$/, () => settingsView(ctx), 'settings'],
   [/^#\/rules$/, () => rulesView(ctx), 'settings'],
   [/^#\/rule\/([^/]+)$/, (m) => ruleEditView(ctx, m[1]), 'settings'],
+  [/^#\/admin$/, () => adminView(ctx), 'settings'],
+  [/^#\/admin\/group\/([^/]+)$/, (m) => adminGroupView(ctx, m[1]), 'settings'],
   [/^/, () => sessionsView(ctx), 'sessions'],
 ];
 

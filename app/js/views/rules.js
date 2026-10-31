@@ -1,5 +1,6 @@
 // ルール画面（設定タブ）：プリセットの一覧・追加・編集（名前変更を含む）・複製・削除（仕様書 6.1）
 // 対局には作成時のルールの中身を丸ごと保存しているので、ここで変えても過去の対局の成績は変わらない
+// 追加・編集・複製・削除は管理者だけ（GAS の authorize_ が判定する）。メンバーには一覧だけを見せる
 import { h, newId, readInt } from '../util.js';
 import { normalizeRule, describeRule } from '../calc.js';
 import { STANDARD_PRESET, presetRow, sortPresets, copyName } from '../model.js';
@@ -13,22 +14,27 @@ function scopeLabel(rule, group) {
 export function rulesView(ctx) {
   const { store } = ctx;
   const rules = sortPresets(store.list('rules'));
+  const admin = store.isAdmin;
+  const content = (r) => h('div', { class: 'list-main' },
+    h('div', { class: 'card-head' },
+      h('strong', null, r.name),
+      h('span', { class: 'tag' }, scopeLabel(r, store.group))),
+    h('div', { class: 'list-sub' }, describeRule(normalizeRule(r))),
+    r.note ? h('div', { class: 'list-sub' }, r.note) : null);
   return {
     title: 'ルール',
     back: '#/settings',
     live: true,
     body: h('div', null,
-      h('a', { class: 'button block', href: '#/rule/new' }, '＋ ルールを追加'),
+      admin ? h('a', { class: 'button block', href: '#/rule/new' }, '＋ ルールを追加') : null,
       rules.length
-        ? h('ul', { class: 'list' }, rules.map((r) => h('li', null, h('a', { class: 'list-item link', href: `#/rule/${r.id}` },
-            h('div', { class: 'list-main' },
-              h('div', { class: 'card-head' },
-                h('strong', null, r.name),
-                h('span', { class: 'tag' }, scopeLabel(r, store.group))),
-              h('div', { class: 'list-sub' }, describeRule(normalizeRule(r))),
-              r.note ? h('div', { class: 'list-sub' }, r.note) : null)))))
+        ? h('ul', { class: 'list' }, rules.map((r) => h('li', null, admin
+            ? h('a', { class: 'list-item link', href: `#/rule/${r.id}` }, content(r))
+            : h('div', { class: 'list-item' }, content(r)))))
         : h('p', { class: 'empty' }, 'ルールがありません'),
-      h('p', { class: 'muted small' }, 'ルールを変えても、過去の対局の成績は変わりません（対局ごとに作成時の設定を保存しているため）。')),
+      h('p', { class: 'muted small' },
+        admin ? '' : 'ルールの追加・編集は管理者が行います。対局ごとの丸め・ウマの調整は、対局の作成画面でできます。',
+        'ルールを変えても、過去の対局の成績は変わりません（対局ごとに作成時の設定を保存しているため）。')),
   };
 }
 
@@ -38,6 +44,9 @@ export function ruleEditView(ctx, ruleId) {
   const isNew = ruleId === 'new';
   const existing = isNew ? null : store.get('rules', ruleId);
   if (!isNew && (!existing || existing.deleted)) return ctx.notFound();
+  if (!store.isAdmin) {
+    return { title: 'ルール', back: '#/rules', body: h('p', { class: 'empty' }, 'ルールの追加・編集は管理者だけができます。') };
+  }
   if (!store.group) {
     return { title: 'ルール', back: '#/rules', body: h('p', { class: 'empty' }, 'まだ GAS と同期できていません。') };
   }
