@@ -509,7 +509,7 @@ test('opponentStats：同じ半荘を打った相手ごとに、勝ち負け・p
   assert.deepEqual(rows.map((r) => r.games), [2, 2, 1, 1]);
 });
 
-test('opponentStats：収支とチップ（同卓した対局のチップは丸ごと、ゲーム代は含めない）', () => {
+test('opponentStats：スコア・チップ・収支は自分と相手の差（チップは同卓した対局の分を丸ごと、ゲーム代は含めない）', () => {
   const ids = ['a', 'b', 'c', 'd'];
   const mk = (sid, rate, chipRate, members, pts, chips) => [
     sessionChanges({ session: { id: sid, group_id: 'g', date: '2026-10-29', rate, chip_rate: chipRate, game_fee: 9000 }, memberIds: members }),
@@ -526,13 +526,15 @@ test('opponentStats：収支とチップ（同卓した対局のチップは丸�
     ...mk('s_2', 100, 500, [...ids, 'e'], [[200, 100, -100, -200, null], [-100, null, 50, -50, 100]], [-2, 1, 0, 0, 1]),
   );
   const byId = Object.fromEntries(opponentStats(t, ['s_1', 's_2'], 'a').map((r) => [r.memberId, r]));
-  // b：s_1 の 2 回（+4.5 → 225P）＋ s_2 の 1 回目（+20.0 → 2,000P）。チップは 3 − 2 = 1 枚 → 600 − 1,000
+  // b：s_1 は 2 回同卓（自分 +4.5、相手 +35.5 → 差 −31.0 → −1,550P）、チップ差 3 − 0 = +3 → +600P
+  //    s_2 は 1 回目だけ（自分 +20.0、相手 +10.0 → 差 +10.0 → +1,000P）、チップ差 −2 − 1 = −3 → −1,500P
   assert.equal(byId.b.games, 3);
-  assert.equal(byId.b.myPt10, 45 + 200);
-  assert.equal(byId.b.chips, 1);
-  assert.equal(byId.b.money, 225 + 600 + 2000 - 1000);
-  // e：s_2 の 2 回目だけ（−10.0 → −1,000P）。チップは s_2 の −2 枚 → −1,000P
-  assert.deepEqual([byId.e.games, byId.e.myPt10, byId.e.chips, byId.e.money], [1, -100, -2, -2000]);
+  assert.equal(byId.b.score10, -310 + 100);
+  assert.deepEqual([byId.b.myPt10, byId.b.theirPt10], [45 + 200, 355 + 100]);
+  assert.equal(byId.b.chips, 0);
+  assert.equal(byId.b.money, -1550 + 600 + 1000 - 1500);
+  // e：s_2 の 2 回目だけ（自分 −10.0、相手 +10.0 → 差 −20.0 → −2,000P）。チップ差は s_2 の −2 − 1 = −3 → −1,500P
+  assert.deepEqual([byId.e.games, byId.e.score10, byId.e.chips, byId.e.money], [1, -200, -3, -3500]);
 });
 
 test('aggregate：日数は対局した日の数（同じ日の対局 2 つは 1 日）', () => {
@@ -602,16 +604,19 @@ test('検算 3（10/02・5 人打ち）：計・小計・収支が本家と一�
   assert.deepEqual(row('games'), [10, 10, 11, 10, 7]);
 });
 
-test('検算 3（10/02）：a から見た相手別は、同卓した半荘での自分の pt と収支（メモの見込みどおり）', () => {
+test('検算 3（10/02）：a から見た相手別が本家の相手別画面と一致する（直接対決の差）', () => {
   const rows = opponentStats(kenzan3Tables(), ['s_1002'], 'a');
   const byId = Object.fromEntries(rows.map((r) => [r.memberId, r]));
-  // [同卓半荘数, 同卓半荘の自分 pt（pt10）, 収支（pt × 50 ＋ チップ −15 × 200）]
-  assert.deepEqual([byId.b.games, byId.b.myPt10, byId.b.money], [8, -1000, -8000]);
-  assert.deepEqual([byId.c.games, byId.c.myPt10, byId.c.money], [9, -720, -6600]);
-  assert.deepEqual([byId.d.games, byId.d.myPt10, byId.d.money], [8, -510, -5550]);
-  assert.deepEqual([byId.e.games, byId.e.myPt10, byId.e.money], [5, -1070, -8350]);
-  // チップは同卓した対局の分を丸ごと（この日は 1 対局なので全員 −15）
-  assert.deepEqual(rows.map((r) => r.chips), [-15, -15, -15, -15]);
+  // 本家の値（2026-10-31 施主が 10/02 に絞って照合）：[対局数, スコア, チップ, 収支]
+  //   スコア ＝ 同卓した半荘の自分の pt − 相手の pt、チップ ＝ その日の自分のチップ − 相手のチップ、
+  //   収支 ＝ スコア差 × 50 ＋ チップ差 × 200（ゲーム代は含まない）
+  const value = (o) => [o.games, o.score10, o.chips, o.money];
+  assert.deepEqual(value(byId.b), [8, -1450, -8, -8850]);   // −100 − 45
+  assert.deepEqual(value(byId.c), [9, 120, -13, -2000]);    // −72 − (−84)
+  assert.deepEqual(value(byId.d), [8, -1100, -37, -12900]); // −51 − 59
+  assert.deepEqual(value(byId.e), [5, -1970, -17, -13250]); // −107 − 90
+  // 内訳：同卓した半荘での自分の pt（作業メモの見込み）
+  assert.deepEqual([byId.b, byId.c, byId.d, byId.e].map((o) => o.myPt10), [-1000, -720, -510, -1070]);
   // 同卓の多い順：c（9 回）が先頭、e（5 回）が最後
   assert.equal(rows[0].memberId, 'c');
   assert.equal(rows[rows.length - 1].memberId, 'e');

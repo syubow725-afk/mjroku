@@ -218,28 +218,30 @@ export function monthGrid(year, month) {
   return Array.from({ length: cells.length / 7 }, (_, w) => cells.slice(w * 7, w * 7 + 7));
 }
 
-// 相手ごとの成績：memberId の人と同じ半荘を打った相手ごとに、「その相手と同卓した半荘での自分の成績」を集める。同卓の多い順
-//   games … 同じ半荘を打った回数（本家の「対局数」）／wins・losses … 着順で相手より上・下だった回数
-//   myPt10 … 自分の pt 合計（本家の「スコア」）／theirPt10 … 相手の pt 合計
-//   chips … 同卓した半荘が 1 回でもある対局での、自分のチップ（チップは対局単位なので半荘には分けられない）
-//   money … 収支（P）＝ 対局ごとに（同卓した半荘の自分の pt × レート）＋ 上のチップ × チップレート。ゲーム代は含めない
-//   myAvgRank・theirAvgRank … その半荘での平均着順
-// 本家の相手別が自分の成績か相手の成績かは未確認（施主が確認中）。仮に自分の成績で作っている
+// 相手ごとの成績（本家の相手別と同じ）：memberId の人と同じ半荘を打った相手ごとに、直接対決の「差」を集める。同卓の多い順
+//   games … 同じ半荘を打った回数（本家の「対局数」）
+//   score10 … スコア ＝ 同卓した半荘の（自分の pt − 相手の pt）の合計（pt10）
+//   chips … チップ ＝ 同卓した対局ごとの（自分のチップ − 相手のチップ）の合計。
+//           チップは対局単位の記録なので、5 人打ちで同卓が一部の半荘だけでも、その日の分を丸ごと使う
+//   money … 収支 ＝ 対局ごとに（スコア差 × レート ＋ チップ差 × チップレート）を出して足す。ゲーム代は含めない
+//   myPt10・theirPt10 … 同卓した半荘での自分・相手の pt 合計（score10 の内訳）
+//   wins・losses・winRate … 着順で相手より上・下だった回数と率／myAvgRank・theirAvgRank … その半荘での平均着順
+// 2026-10-31 検算 3（10/02）で本家の相手別画面と照合済み
 export function opponentStats(tables, sessionIds, memberId) {
   const byOpponent = new Map();
   for (const id of sessionIds) {
     const session = tables.sessions[id];
     if (!alive(session)) continue;
-    const myChips = sessionParticipants(tables, id).find((p) => p.member_id === memberId)?.chips ?? 0;
-    const sharedPt10 = new Map(); // 相手 → この対局で同卓した半荘の自分の pt 合計
+    const chipsOf = new Map(sessionParticipants(tables, id).map((p) => [p.member_id, p.chips ?? 0]));
+    const diff10 = new Map(); // 相手 → この対局で同卓した半荘の（自分 − 相手）の pt10
     for (const { results } of sessionHanchans(tables, id)) {
       const mine = results[memberId];
       if (!mine) continue;
       for (const r of Object.values(results)) {
         if (r.member_id === memberId) continue;
         const o = byOpponent.get(r.member_id) || {
-          memberId: r.member_id, games: 0, wins: 0, losses: 0, myPt10: 0, theirPt10: 0, chips: 0, money: 0,
-          myRankSum: 0, theirRankSum: 0,
+          memberId: r.member_id, games: 0, wins: 0, losses: 0, score10: 0, chips: 0, money: 0,
+          myPt10: 0, theirPt10: 0, myRankSum: 0, theirRankSum: 0,
         };
         o.games += 1;
         if (mine.rank < r.rank) o.wins += 1;
@@ -249,13 +251,15 @@ export function opponentStats(tables, sessionIds, memberId) {
         o.myRankSum += mine.rank;
         o.theirRankSum += r.rank;
         byOpponent.set(r.member_id, o);
-        sharedPt10.set(r.member_id, (sharedPt10.get(r.member_id) || 0) + toPt10(mine.pt));
+        diff10.set(r.member_id, (diff10.get(r.member_id) || 0) + toPt10(mine.pt) - toPt10(r.pt));
       }
     }
-    for (const [opponentId, pt10] of sharedPt10) {
+    for (const [opponentId, pt10] of diff10) {
       const o = byOpponent.get(opponentId);
-      const { subtotal } = settle({ pt10, chips: myChips, rate: session.rate ?? 0, chipRate: session.chip_rate ?? 0, fee: 0 });
-      o.chips += myChips;
+      const chips = (chipsOf.get(memberId) ?? 0) - (chipsOf.get(opponentId) ?? 0);
+      const { subtotal } = settle({ pt10, chips, rate: session.rate ?? 0, chipRate: session.chip_rate ?? 0, fee: 0 });
+      o.score10 += pt10;
+      o.chips += chips;
       o.money += subtotal;
     }
   }

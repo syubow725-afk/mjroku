@@ -12,7 +12,9 @@ const remote = execSync('git remote get-url origin', { encoding: 'utf8' }).trim(
 const [, owner, repo] = /github\.com[/:]([^/]+)\/([^/.]+)/.exec(remote) || [];
 if (!owner) throw new Error(`GitHub のリポジトリが分かりません: ${remote}`);
 const pagesUrl = `https://${owner}.github.io/${repo}/`;
-const head = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+// 公開（pages.yml）は app/ が変わったときだけ動くので、app/ を最後に変えたコミットと比べる
+// （テストや docs だけのコミットでは公開が起きない）
+const head = execSync('git log -1 --format=%H -- app', { encoding: 'utf8' }).trim();
 const versionOf = (text) => /CACHE_VERSION = '([^']+)'/.exec(text)?.[1] || '?';
 // 比べるのはコミット済みの版（push したもの）。作業中でまだコミットしていない変更は見ない
 const localVersion = versionOf(execSync('git show HEAD:app/sw.js', { encoding: 'utf8' }));
@@ -37,11 +39,11 @@ async function check() {
 }
 
 function report({ run, live }) {
-  console.log(`手元     : v${localVersion}（${head.slice(0, 7)}・コミット済みの版）`);
+  console.log(`手元     : v${localVersion}（app/ の最新コミット ${head.slice(0, 7)}）`);
   if (run.error) console.log(`公開処理 : ${run.error}`);
   else {
     const state = run.status !== 'completed' ? `実行中（${run.status}）` : run.conclusion === 'success' ? '成功' : `失敗（${run.conclusion}）`;
-    const which = run.sha === head ? '手元と同じコミット' : `別のコミット ${run.sha.slice(0, 7)}（手元をまだ push していないか、公開待ち）`;
+    const which = run.sha === head ? 'app/ の最新コミットと同じ' : `別のコミット ${run.sha.slice(0, 7)}（手元をまだ push していないか、公開待ち）`;
     console.log(`公開処理 : ${state}・${which}`);
     if (run.conclusion && run.conclusion !== 'success') console.log(`           ${run.url}`);
   }

@@ -115,12 +115,13 @@ function statsBody(s, { points, period, calendar, opponents, t }) {
       h('h2', null, '相手ごとの成績'),
       opponentList(opponents, t),
       h('p', { class: 'muted small' },
-        'その相手と同じ半荘を打ったときの、自分の成績です。収支はゲーム代を含みません。',
-        'チップは対局ごとの記録なので、その相手と 1 回でも同卓した対局の分を数えます。',
+        'その相手と同じ半荘を打ったときの、自分と相手の差です（本家の相手別と同じ）。',
+        'スコアは自分の pt − 相手の pt。チップはその日の自分のチップ − 相手のチップで、同卓した日の分を丸ごと数えます。',
+        '収支はスコア差 × レート ＋ チップ差 × チップレートで、ゲーム代は含みません。',
         '勝ち・負けは、その半荘の着順で相手より上か下か。平均着順は「自分 / 相手」。')) : null);
 }
 
-// 相手 1 人ずつのカード。本家の相手別と同じ 4 項目（対局数・スコア・収支・チップ）に、勝ち負けと平均着順を添える
+// 相手 1 人ずつのカード。本家の相手別と同じ 4 項目（対局数・スコア・収支・チップ。どれも自分と相手の差）に、勝ち負けと平均着順を添える
 function opponentList(rows, t) {
   const value = (label, text, cls = '') => h('div', { class: 'opp-value' },
     h('div', { class: 'stat-label' }, label), h('div', { class: `num ${cls}` }, text));
@@ -129,7 +130,7 @@ function opponentList(rows, t) {
       h('strong', { class: 'card-title' }, memberName(t, o.memberId)),
       h('span', { class: 'muted small' }, `${o.games} 半荘`)),
     h('div', { class: 'opp-values' },
-      value('スコア', formatPt(o.myPt10), signClass(o.myPt10)),
+      value('スコア', formatPt(o.score10), signClass(o.score10)),
       value('収支', formatMoney(o.money), signClass(o.money)),
       value('チップ', formatChips(o.chips), signClass(o.chips))),
     h('div', { class: 'list-sub' },

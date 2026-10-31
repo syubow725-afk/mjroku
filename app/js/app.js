@@ -13,7 +13,7 @@ import { rankingView } from './views/ranking.js';
 import { setupUpdates } from './update.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.4.7';
+const APP_VERSION = '0.5.0';
 
 const store = new Store({ api, getConfig });
 
