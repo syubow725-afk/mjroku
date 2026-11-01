@@ -3,7 +3,7 @@
 'use strict';
 
 // app.js の APP_VERSION と揃えて上げる。上げると古いキャッシュは activate 時に消える
-const CACHE_VERSION = '0.7.1';
+const CACHE_VERSION = '1.0.0';
 const CACHE_NAME = `mjroku-${CACHE_VERSION}`;
 
 // js を足したらここにも足す
@@ -41,7 +41,7 @@ const APP_SHELL = [
 ];
 
 // 新しい版のファイルは、ブラウザの HTTP キャッシュを通さずに取る（cache: 'reload'）。
-// GitHub Pages はファイルを 10 分キャッシュさせるので、通すと古い版が新しいキャッシュに混ざることがある
+// 公開先がファイルを一定時間キャッシュさせると、通したときに古い版が新しいキャッシュに混ざることがある
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME)

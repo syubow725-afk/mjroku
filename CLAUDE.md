@@ -13,10 +13,11 @@
 | `docs/04_段階0_手順.md` | スプレッドシート・GAS・GitHub Pages・iPhone の準備手順 |
 | `docs/06_過去対局の取り込み形式.md` | 本家の過去対局を一括で取り込むファイル（JSON）の形式 |
 | `docs/07_Cloudflare移行手順.md` | GitHub Pages から Cloudflare Pages への移行と、GAS の URL を site.json で渡すしくみ |
+| `docs/08_Android確認項目.md` | 配った最初の Android の人に試してもらう確認項目 |
 
 ## 構成（決定事項）
 
-- **アプリ本体**：PWA（素の HTML/CSS/JavaScript、ビルド工程なし）。GitHub Pages で公開し、iPhone の Safari から「ホーム画面に追加」して使う
+- **アプリ本体**：PWA（素の HTML/CSS/JavaScript、ビルド工程なし）。Cloudflare Pages（https://mjroku.pages.dev/）で公開し、iPhone の Safari から「ホーム画面に追加」して使う。main に push すると Cloudflare が自動で公開する（公開のときに `scripts/build-site.mjs` で接続先の site.json だけを作る）。GitHub Pages は v1.0.0 で止めた
 - **データ**：施主個人の Google ドライブ上のスプレッドシート 1 冊
 - **窓口**：スプレッドシートに紐づく Google Apps Script（GAS）をウェブアプリとして公開（実行ユーザー＝自分／アクセス＝全員）。アプリは GAS 経由でのみ読み書きする
 - **アクセス制御**：卓グループごとの合言葉。GAS 側で合言葉を照合し、そのグループのデータだけを返す
@@ -28,7 +29,7 @@
 麻雀録/
 ├─ CLAUDE.md          本ファイル
 ├─ docs/              設計書類
-├─ app/               PWA 本体（GitHub Pages の公開対象）
+├─ app/               PWA 本体（Cloudflare Pages の公開対象）
 │   ├─ index.html
 │   ├─ manifest.json
 │   ├─ sw.js          Service Worker
@@ -51,7 +52,7 @@
 - 点数計算（素点→pt、端数処理、着順判定、精算）は `app/js/calc.js` に**純粋関数**として切り出し、`tests/` にテストを書く。仕様書の計算例は必ずテストケースに入れる
 - 金額・pt の計算で浮動小数の誤差を出さない（内部は 100 点単位・整数で持ち、表示時に換算する）
 - GAS のウェブアプリ URL と合言葉はソースに直書きしない。アプリ側は初回起動時に入力させ端末に保存する。Cloudflare Pages の版は、公開のときに環境変数 `GAS_URL` から `app/site.json` を作り（`scripts/build-site.mjs`）、アプリはそれを接続先に使う。`app/site.json` は `.gitignore` 済みで、コミットしない
-- push したら `npm run check:pages -- --wait` で公開を確かめる。本番は Cloudflare Pages（https://mjroku.pages.dev/）で、公開中の sw.js が手元と同じ版になり、接続先の site.json があれば OK。GitHub Pages（旧公開先）は `.github/workflows/pages.yml` がある間だけ、公開 API と公開中の sw.js も見る（gh は使わない）
+- push したら `npm run check:pages -- --wait` で公開を確かめる。公開中の sw.js（https://mjroku.pages.dev/）が手元と同じ版になり、接続先の site.json があれば OK
 - 版を上げるときは app/js/app.js の APP_VERSION と app/sw.js の CACHE_VERSION をそろえる。アプリは公開中の sw.js の版と自分の版を比べて「新しい版があります → 更新」の帯を出す（app/js/update.js）
 - GAS の更新は clasp で行う（`.clasp.json` はルートに置き、`gas/` を指す。`.gitignore` 済み）。`clasp push --force` → `clasp redeploy <@HEAD でない方のデプロイ ID>` の順。デプロイ ID は URL の一部なので、表示・記録しない。push と redeploy は施主の OK を取ってから行う。「シートを準備」は施主がスプレッドシートのメニューから実行する（バックアップのコピーにも同じメニューが付くので、本物のスプレッドシートで実行するよう毎回添える）
 - 通信できないときは端末に一時保存し、復帰後に送信する（現場は電波が弱いことがある）

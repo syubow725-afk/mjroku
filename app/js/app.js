@@ -16,7 +16,7 @@ import { carryListView, carryEditView } from './views/carry.js';
 import { importView } from './views/import.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.7.1';
+const APP_VERSION = '1.0.0';
 
 const store = new Store({
   api,
@@ -168,7 +168,7 @@ setInterval(() => {
   if (store.totalPending() > 0) store.sync();
 }, 60000);
 
-// 配布元が決めた接続先があれば先に読む（Cloudflare Pages の版。GitHub Pages・手元では無いので今までどおり）
+// 配布元が決めた接続先があれば先に読む（Cloudflare Pages の版。手元で動かすときは無いので、設定画面で URL を入れる）
 await loadSiteConfig();
 if (!isConfigured() && !location.hash) location.hash = '#/settings';
 render();

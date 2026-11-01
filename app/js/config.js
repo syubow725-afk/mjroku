@@ -30,7 +30,7 @@ export function setConfig(values) {
 }
 
 // 配布元が決めた接続先（Cloudflare Pages の公開のときに scripts/build-site.mjs が site.json に書く）。
-// あれば GAS の URL として保存し、利用者には入れさせない。なければ（GitHub Pages・手元）今までどおり設定画面で入れる。
+// あれば GAS の URL として保存し、利用者には入れさせない。なければ（手元で動かすときなど）設定画面で入れる。
 // 電波がないときは Service Worker が前に読んだ site.json を返す。それもなければ保存済みの URL のまま使う
 const SITE_KEY = 'mjroku.gasUrlFromSite';
 
