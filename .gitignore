@@ -12,3 +12,6 @@ Thumbs.db
 
 # 本家からの移行用データ（仲間の実名を含むため公開しない）
 移行データ/
+
+# Cloudflare Pages の公開で作る接続先（scripts/build-site.mjs）。手元で作っても入れない
+app/site.json

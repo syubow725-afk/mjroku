@@ -1,7 +1,7 @@
 // 麻雀録 アプリの入口：画面の切り替え（#/… のハッシュで決める）と同期のきっかけづくり
 import { Store } from './store.js';
 import * as api from './api.js';
-import { getConfig, setConfig, isConfigured, getKeys, setKeys, keyEntry, mergeKey, groupChoices } from './config.js';
+import { getConfig, setConfig, isConfigured, getKeys, setKeys, keyEntry, mergeKey, groupChoices, loadSiteConfig } from './config.js';
 import { h } from './util.js';
 import { sessionsView, sessionFormView, summaryView } from './views/sessions.js';
 import { sessionView, hanchanView, chipsView, shareView } from './views/session.js';
@@ -16,7 +16,7 @@ import { carryListView, carryEditView } from './views/carry.js';
 import { importView } from './views/import.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.7.1';
 
 const store = new Store({
   api,
@@ -168,6 +168,8 @@ setInterval(() => {
   if (store.totalPending() > 0) store.sync();
 }, 60000);
 
+// 配布元が決めた接続先があれば先に読む（Cloudflare Pages の版。GitHub Pages・手元では無いので今までどおり）
+await loadSiteConfig();
 if (!isConfigured() && !location.hash) location.hash = '#/settings';
 render();
 store.sync();

@@ -12,6 +12,7 @@
 | `docs/03_アイコン生成プロンプト.md` | ホーム画面アイコンの画像生成用プロンプト（Gemini で作成予定） |
 | `docs/04_段階0_手順.md` | スプレッドシート・GAS・GitHub Pages・iPhone の準備手順 |
 | `docs/06_過去対局の取り込み形式.md` | 本家の過去対局を一括で取り込むファイル（JSON）の形式 |
+| `docs/07_Cloudflare移行手順.md` | GitHub Pages から Cloudflare Pages への移行と、GAS の URL を site.json で渡すしくみ |
 
 ## 構成（決定事項）
 
@@ -49,7 +50,7 @@
 
 - 点数計算（素点→pt、端数処理、着順判定、精算）は `app/js/calc.js` に**純粋関数**として切り出し、`tests/` にテストを書く。仕様書の計算例は必ずテストケースに入れる
 - 金額・pt の計算で浮動小数の誤差を出さない（内部は 100 点単位・整数で持ち、表示時に換算する）
-- GAS のウェブアプリ URL と合言葉はソースに直書きしない。アプリ側は初回起動時に入力させ端末に保存する
+- GAS のウェブアプリ URL と合言葉はソースに直書きしない。アプリ側は初回起動時に入力させ端末に保存する。Cloudflare Pages の版は、公開のときに環境変数 `GAS_URL` から `app/site.json` を作り（`scripts/build-site.mjs`）、アプリはそれを接続先に使う。`app/site.json` は `.gitignore` 済みで、コミットしない
 - push したら `npm run check:pages -- --wait` で、GitHub Pages の公開が成功し、公開中の sw.js が手元と同じ版になったことを確かめる（gh は使わない。GitHub の公開 API と公開中の sw.js を見る）
 - 版を上げるときは app/js/app.js の APP_VERSION と app/sw.js の CACHE_VERSION をそろえる。アプリは公開中の sw.js の版と自分の版を比べて「新しい版があります → 更新」の帯を出す（app/js/update.js）
 - GAS の更新は clasp で行う（`.clasp.json` はルートに置き、`gas/` を指す。`.gitignore` 済み）。`clasp push --force` → `clasp redeploy <@HEAD でない方のデプロイ ID>` の順。デプロイ ID は URL の一部なので、表示・記録しない。push と redeploy は施主の OK を取ってから行う。「シートを準備」は施主がスプレッドシートのメニューから実行する（バックアップのコピーにも同じメニューが付くので、本物のスプレッドシートで実行するよう毎回添える）

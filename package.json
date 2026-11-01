@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "check:pages": "node scripts/check-pages.mjs"
+    "check:pages": "node scripts/check-pages.mjs",
+    "build:site": "node scripts/build-site.mjs"
   }
 }

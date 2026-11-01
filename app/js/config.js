@@ -29,6 +29,31 @@ export function setConfig(values) {
   }
 }
 
+// 配布元が決めた接続先（Cloudflare Pages の公開のときに scripts/build-site.mjs が site.json に書く）。
+// あれば GAS の URL として保存し、利用者には入れさせない。なければ（GitHub Pages・手元）今までどおり設定画面で入れる。
+// 電波がないときは Service Worker が前に読んだ site.json を返す。それもなければ保存済みの URL のまま使う
+const SITE_KEY = 'mjroku.gasUrlFromSite';
+
+export async function loadSiteConfig({ timeoutMs = 3000 } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch('site.json', { cache: 'no-cache', signal: controller.signal });
+    if (!res.ok) return;
+    const { gasUrl } = await res.json();
+    if (typeof gasUrl !== 'string' || !/^https?:\/\//.test(gasUrl)) return;
+    setConfig({ gasUrl });
+    try { localStorage.setItem(SITE_KEY, '1'); } catch { /* 保存できない端末では今回限り */ }
+  } catch { /* 読めなければ保存済みの設定のまま */ } finally {
+    clearTimeout(timer);
+  }
+}
+
+// 接続先が配布元で決まっているか（設定画面で URL の欄を出さない）
+export function isSiteManaged() {
+  try { return localStorage.getItem(SITE_KEY) === '1'; } catch { return false; }
+}
+
 export function isConfigured(config = getConfig()) {
   return Boolean(config.gasUrl && config.passcode);
 }

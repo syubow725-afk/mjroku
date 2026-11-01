@@ -1,7 +1,7 @@
 // 設定画面：自分の名前、GAS の URL、合言葉（端末にいくつでも持てる）、グループ（役割・規定半荘数）、管理への入口、同期の状況
 import { h, setChildren } from '../util.js';
 import * as api from '../api.js';
-import { getConfig, setConfig, getKeys, setKeys, keyEntry, mergeKey, groupChoices } from '../config.js';
+import { getConfig, setConfig, getKeys, setKeys, keyEntry, mergeKey, groupChoices, isSiteManaged } from '../config.js';
 
 export function settingsView(ctx) {
   const { store } = ctx;
@@ -110,7 +110,10 @@ export function settingsView(ctx) {
     body: h('div', null,
       h('section', { class: 'card' },
         h('label', { class: 'field' }, h('span', null, '自分の名前'), name),
-        h('label', { class: 'field' }, h('span', null, 'GAS ウェブアプリ URL'), url),
+        // 接続先が配布元で決まっていれば、URL の欄は出さない（利用者が入れるのは名前と合言葉だけ）
+        isSiteManaged()
+          ? h('p', { class: 'muted small' }, '接続先は設定済みです。合言葉を入れてください。')
+          : h('label', { class: 'field' }, h('span', null, 'GAS ウェブアプリ URL'), url),
         h('label', { class: 'field' }, passLabel, pass),
         saveButton,
         message),
