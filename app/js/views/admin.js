@@ -1,4 +1,4 @@
-// 管理（管理者だけ）：グループの一覧・追加、グループの名前・規定半荘数・合言葉の設定。
+// 管理（管理者だけ）：グループの一覧・追加、グループの名前・規定半荘数・切替日・合言葉の設定。
 // どれも GAS に直接送る（送信待ちには入れない）。電波がないときはその場でエラーを出す。
 // 権限の判定は GAS が行う（ここで画面を出さないのは、メンバーに使えないボタンを見せないため）
 import { h } from '../util.js';
@@ -50,6 +50,17 @@ export function adminView(ctx) {
           h('span', { class: 'muted' }, '›'))))),
         h('button', { type: 'button', class: 'block secondary', onclick: add }, '＋ グループを追加'),
         message),
+      store.group
+        ? h('section', { class: 'card' },
+            h('h2', null, `本家からの移行（${store.group.name}）`),
+            h('a', { class: 'list-item link', href: '#/admin/import' },
+              h('span', { class: 'list-main' }, '過去対局の取り込み', h('div', { class: 'list-sub' }, '本家の対局をファイルから一括で入れる')),
+              h('span', { class: 'muted' }, '›')),
+            h('a', { class: 'list-item link', href: '#/admin/carry' },
+              h('span', { class: 'list-main' }, '本家からの繰り越し', h('div', { class: 'list-sub' }, 'メンバーごとの本家通算と、残りの繰り越し')),
+              h('span', { class: 'muted' }, '›')),
+            h('p', { class: 'muted small' }, '表示中のグループに入れます。別のグループは、上の欄で切り替えてから。'))
+        : null,
       h('p', { class: 'muted small' },
         'グループのデータは、そのグループの合言葉を持つ人と管理者にしか届きません。',
         '管理者の合言葉は、スプレッドシートのメニュー「麻雀録 → 管理者の合言葉を設定」でだけ変えられます。')),
@@ -67,6 +78,7 @@ export function adminGroupView(ctx, groupId) {
     inputmode: 'numeric', class: 'narrow', autocomplete: 'off',
     value: group.min_games == null ? '' : String(group.min_games), placeholder: String(DEFAULT_MIN_GAMES),
   });
+  const cutover = h('input', { type: 'date', value: group.cutover_date || '' });
   const settingsMessage = h('p', { class: 'result' });
   const pass1 = h('input', { type: 'password', autocomplete: 'new-password' });
   const pass2 = h('input', { type: 'password', autocomplete: 'new-password' });
@@ -92,7 +104,9 @@ export function adminGroupView(ctx, groupId) {
     button.disabled = true;
     show(settingsMessage, '', '保存中…');
     try {
-      const res = await api.saveGroup(getConfig(), { id: group.id, name: name.value.trim(), min_games: value === '' ? null : Number(value) });
+      const res = await api.saveGroup(getConfig(), {
+        id: group.id, name: name.value.trim(), min_games: value === '' ? null : Number(value), cutover_date: cutover.value,
+      });
       store.applyGroups(res);
       show(settingsMessage, 'ok', '保存しました');
     } catch (err) {
@@ -141,8 +155,17 @@ export function adminGroupView(ctx, groupId) {
         h('label', { class: 'field' }, h('span', null, '率の規定半荘数（トップ率・連対率・ラス回避率）'),
           h('div', { class: 'inline' }, minGames, h('span', null, '半荘以上'))),
         h('p', { class: 'muted small' }, `空なら初期値の ${DEFAULT_MIN_GAMES}。このグループの全員に共通です。`),
+        h('label', { class: 'field' }, h('span', null, '本家からの切替日'), cutover),
+        h('p', { class: 'muted small' }, 'この日から本アプリで記録する日。空なら本家からの繰り越しを使いません。この日より前の対局を入れると、その分を繰り越しから減らします。'),
         h('button', { type: 'button', onclick: (e) => saveSettings(e.currentTarget) }, '保存'),
         settingsMessage),
+      h('section', { class: 'card' },
+        h('h2', null, '本家からの繰り越し'),
+        group.id === store.group?.id
+          ? h('a', { class: 'list-item link', href: '#/admin/carry' },
+              h('span', { class: 'list-main' }, 'メンバーごとの本家通算', h('div', { class: 'list-sub' }, '入力と、切替日より前の対局を入れた後の残り')),
+              h('span', { class: 'muted' }, '›'))
+          : h('p', { class: 'muted small' }, '上の欄でこのグループに切り替えると入れられます。')),
       h('section', { class: 'card' },
         h('h2', null, '合言葉'),
         passHint,

@@ -14,7 +14,7 @@
 // 率のランキングの規定半荘数の初期値（グループの設定が空のとき）
 export const DEFAULT_MIN_GAMES = 10;
 
-export const SHEETS = ['members', 'group_members', 'rules', 'sessions', 'participants', 'hanchans', 'results'];
+export const SHEETS = ['members', 'group_members', 'rules', 'sessions', 'participants', 'hanchans', 'results', 'carryovers'];
 
 export function emptyTables() {
   return Object.fromEntries(SHEETS.map((s) => [s, {}]));
@@ -62,13 +62,30 @@ export function removeSent(outbox, sent) {
   }
 }
 
-function recordsOf(outbox) {
-  const records = {};
-  for (const sheet of SHEETS) {
-    const rows = Object.values(outbox[sheet] || {});
-    if (rows.length) records[sheet] = rows;
+// 1 回の save で送る行の上限。過去対局の取り込みのように数百行になるとき、GAS の処理が
+// 通信の打ち切り（api.js の 20 秒）を越えないよう分けて送る
+export const SAVE_CHUNK_ROWS = 200;
+
+// 送信待ちを、save 1 回分ずつに分ける。[{ records（GAS に送る形）, sent（送信待ちと同じ形） }]
+// 所属 → メンバー → 対局 → 参加者・半荘 → 成績 の順に並べるので、親の行が子より前の回に届く
+// （GAS は、同じ回か保存済みの親を見てグループを確かめる。メンバーと繰り越しは所属を見る）
+const SEND_ORDER = ['group_members', 'members', 'rules', 'sessions', 'participants', 'hanchans', 'results', 'carryovers'];
+
+export function outboxChunks(outbox, size = SAVE_CHUNK_ROWS) {
+  const chunks = [];
+  let current = null;
+  for (const sheet of SEND_ORDER) {
+    for (const row of Object.values(outbox[sheet] || {})) {
+      if (!current || current.count >= size) {
+        current = { records: {}, sent: emptyTables(), count: 0 };
+        chunks.push(current);
+      }
+      (current.records[sheet] = current.records[sheet] || []).push(row);
+      current.sent[sheet][row.id] = row;
+      current.count += 1;
+    }
   }
-  return records;
+  return chunks.map(({ records, sent }) => ({ records, sent }));
 }
 
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -173,6 +190,16 @@ export class Store {
     this.refreshOtherPending();
     this.emit('data');
     return this.sync();
+  }
+
+  // 表示中でないグループのメンバー（端末に置いてある分）。過去対局の取り込みで、同じ人を同じメンバーにするのに使う
+  otherGroupMembers() {
+    return this.choices()
+      .filter((c) => c.groupId !== this.slotId)
+      .flatMap((c) => {
+        const slot = this.readSlot(c.groupId);
+        return slot ? Object.values(overlay(slot.server, slot.outbox).members) : [];
+      });
   }
 
   // 合言葉を外したとき、もう開けないグループの置き場を消す（送信待ちがないことは呼ぶ側で確かめる）
@@ -315,10 +342,11 @@ export class Store {
       if (c.groupId === this.slotId) continue;
       const slot = this.readSlot(c.groupId);
       if (!slot || countOutbox(slot.outbox) === 0) continue;
-      const sent = clone(slot.outbox);
       try {
-        await this.api.save({ ...config, passcode: c.passcode, groupId: c.groupId }, recordsOf(sent));
-        this.markSent(c.groupId, sent);
+        for (const chunk of outboxChunks(clone(slot.outbox))) {
+          await this.api.save({ ...config, passcode: c.passcode, groupId: c.groupId }, chunk.records);
+          this.markSent(c.groupId, chunk.sent);
+        }
         delete this.otherErrors[c.groupId];
       } catch (err) {
         this.otherErrors[c.groupId] = err.message;
@@ -351,10 +379,10 @@ export class Store {
       await this.flushOthers(config);
       // 途中でグループを切り替えたら、ここでやめる（切り替えた先は switchTo が続けて同期する）
       if (seq !== this.seq) return;
-      if (this.pendingCount() > 0) {
-        const sent = clone(this.outbox);
-        await this.api.save(config, recordsOf(sent));
-        this.markSent(slotId, sent);
+      // 分けて送り、届いた回の分から送信待ちを外す（途中で切れても、届いた分は送り直さない）
+      for (const chunk of outboxChunks(clone(this.outbox))) {
+        await this.api.save(config, chunk.records);
+        this.markSent(slotId, chunk.sent);
         if (seq !== this.seq) return;
       }
       const res = await this.api.load(config);

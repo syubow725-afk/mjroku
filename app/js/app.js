@@ -12,9 +12,11 @@ import { homeView } from './views/home.js';
 import { rankingView } from './views/ranking.js';
 import { setupUpdates } from './update.js';
 import { adminView, adminGroupView } from './views/admin.js';
+import { carryListView, carryEditView } from './views/carry.js';
+import { importView } from './views/import.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.6.1';
+const APP_VERSION = '0.6.2';
 
 const store = new Store({
   api,
@@ -60,6 +62,9 @@ const routes = [
   [/^#\/rule\/([^/]+)$/, (m) => ruleEditView(ctx, m[1]), 'settings'],
   [/^#\/admin$/, () => adminView(ctx), 'settings'],
   [/^#\/admin\/group\/([^/]+)$/, (m) => adminGroupView(ctx, m[1]), 'settings'],
+  [/^#\/admin\/carry$/, () => carryListView(ctx), 'settings'],
+  [/^#\/admin\/import$/, () => importView(ctx), 'settings'],
+  [/^#\/admin\/carry\/([^/]+)$/, (m) => carryEditView(ctx, m[1]), 'settings'],
   [/^/, () => sessionsView(ctx), 'sessions'],
 ];
 
@@ -123,7 +128,7 @@ function renderGroupSwitch() {
 
 // 一覧の画面は切り替えた先のグループでそのまま見せる。
 // 対局の中や入力中の画面は前のグループのものなので、そのタブの一覧に戻す
-const KEEP_ON_SWITCH = /^#\/(home|ranking|sessions|summary|members|settings|rules|admin)$/;
+const KEEP_ON_SWITCH = /^#\/(home|ranking|sessions|summary|members|settings|rules|admin|admin\/carry)$/;
 
 function switchGroup(groupId) {
   const choice = groupChoices(getKeys()).find((c) => c.groupId === groupId);

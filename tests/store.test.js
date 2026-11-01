@@ -184,3 +184,29 @@ test('Store：表示中でないグループを送れなくても、表示中の
   assert.equal(store.otherErrors.g_a, '合言葉が違います');
   assert.equal(store.totalPending(), 1);
 });
+
+test('Store：送信待ちが多いときは分けて送る。途中で切れても届いた回の分は外れる', async () => {
+  const config = { gasUrl: 'u', passcode: 'pa', groupId: 'g_a' };
+  const { store, gas } = twoGroups({ config });
+  await store.sync();
+  // 対局 1 つ＋成績 450 行（取り込みの大きさ）
+  const results = Array.from({ length: 450 }, (_, i) => ({ id: `r_${i}`, hanchan_id: 'h_1' }));
+  gas.offline = true;
+  store.write({ results, sessions: [{ id: 's_big', group_id: 'g_a' }] });
+  await store.sync();
+  assert.equal(store.pendingCount(), 451);
+  // 2 回目の save で通信が切れる
+  gas.offline = false;
+  let saves = 0;
+  const save = store.api.save;
+  store.api.save = async (c, r) => { saves += 1; if (saves === 2) throw new Error('時間切れ'); return save(c, r); };
+  await store.sync();
+  const first = gas.calls.filter((c) => c.action === 'save')[0].records;
+  assert.deepEqual(Object.keys(first), ['sessions', 'results'], '親の対局が先');
+  assert.equal(first.sessions.length + first.results.length, 200);
+  assert.equal(store.pendingCount(), 251, '1 回目の 200 行は外れた');
+  store.api.save = save;
+  await store.sync();
+  assert.equal(store.pendingCount(), 0);
+  assert.deepEqual(gas.calls.filter((c) => c.action === 'save').map((c) => Object.values(c.records).flat().length), [200, 200, 51]);
+});

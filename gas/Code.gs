@@ -14,7 +14,7 @@
  *
  * 役割（段階4。docs/05_次の作業メモ「権限の分け方」）
  *   member … グループの合言葉。そのグループのデータだけ読み書きできる。ルールの変更、メンバーの削除、
- *             削除した対局・メンバーの復元はできない
+ *             削除した対局・メンバーの復元、本家からの繰り越しの入力はできない
  *   admin  … 管理者の合言葉（施主専用。1 つだけ）。全グループを選んで読み書きでき、グループと合言葉も管理できる
  *
  * スプレッドシートのメニュー「麻雀録」
@@ -30,7 +30,8 @@
 
 const TABLES = {
   // min_games：グループ共通の設定「率のランキングの規定半荘数」（空なら 10）
-  groups: [['id', 's'], ['name', 's'], ['passcode_hash', 's'], ['min_games', 'n']],
+  // cutover_date：本家からの切替日（"2026-11-07"。空なら繰り越しを使わない）
+  groups: [['id', 's'], ['name', 's'], ['passcode_hash', 's'], ['min_games', 'n'], ['cutover_date', 's']],
   members: [['id', 's'], ['name', 's'], ['aliases', 's']],
   group_members: [['id', 's'], ['group_id', 's'], ['member_id', 's']],
   rules: [
@@ -52,11 +53,16 @@ const TABLES = {
     ['id', 's'], ['hanchan_id', 's'], ['member_id', 's'], ['seat', 'n'],
     ['raw_score', 'n'], ['pt', 'n'], ['rank', 'n'],
   ],
+  // 本家からの繰り越し（切替日時点の本家「全件集計」の値）。id は "グループ ID:メンバー ID"
+  carryovers: [
+    ['id', 's'], ['group_id', 's'], ['member_id', 's'],
+    ['pt', 'n'], ['chips', 'n'], ['subtotal', 'n'], ['balance', 'n'], ['games', 'n'], ['days', 'n'],
+  ],
 };
 const COMMON_COLUMNS = [['created_at', 's'], ['updated_at', 's'], ['deleted', 'b']];
 
 // アプリから書き込めるシート（groups は合言葉を含むので書かせない）
-const WRITABLE = ['members', 'group_members', 'rules', 'sessions', 'participants', 'hanchans', 'results'];
+const WRITABLE = ['members', 'group_members', 'rules', 'sessions', 'participants', 'hanchans', 'results', 'carryovers'];
 
 function columnsOf_(name) {
   return TABLES[name].concat(COMMON_COLUMNS);
@@ -158,10 +164,11 @@ function authenticate_(passcode, groupId) {
 //   ・ルールの追加・編集・削除（対局ごとの丸め・ウマの調整は対局の rule_snapshot に入るので、ここには来ない）
 //   ・メンバーの削除
 //   ・削除した対局・メンバーの復元
+//   ・本家からの繰り越しの入力
 // 参加者・成績の行は、対局の編集で外した人を戻すときに削除を取り消すことがあるので、復元を止めない
 function authorize_(auth, sheet, row, existing) {
   if (auth.role === 'admin') return true;
-  if (sheet === 'rules') return false;
+  if (sheet === 'rules' || sheet === 'carryovers') return false;
   const wasDeleted = Boolean(existing && existing.deleted);
   if (sheet === 'members' && row.deleted && !wasDeleted) return false;
   if ((sheet === 'sessions' || sheet === 'members') && wasDeleted && !row.deleted) return false;
@@ -170,7 +177,10 @@ function authorize_(auth, sheet, row, existing) {
 
 // アプリに返すグループの形（passcode_hash は返さず、合言葉が設定済みかだけを返す）
 function publicGroup_(g) {
-  return { id: g.id, name: g.name, min_games: g.min_games == null ? null : g.min_games, has_passcode: Boolean(g.passcode_hash) };
+  return {
+    id: g.id, name: g.name, min_games: g.min_games == null ? null : g.min_games,
+    cutover_date: g.cutover_date || '', has_passcode: Boolean(g.passcode_hash),
+  };
 }
 
 function listGroups_() {
@@ -185,7 +195,7 @@ function load_(auth) {
   const group = auth.group;
   const G = group.id;
   const t = {};
-  WRITABLE.forEach((name) => { t[name] = readTable_(name).rows; });
+  WRITABLE.forEach((name) => { t[name] = readTableIfAny_(name).rows; });
 
   const groupMembers = t.group_members.filter((r) => r.group_id === G);
   const memberIds = new Set(groupMembers.map((r) => r.member_id));
@@ -207,6 +217,7 @@ function load_(auth) {
       participants: t.participants.filter((r) => sessionIds.has(r.session_id)),
       hanchans: hanchans,
       results: t.results.filter((r) => hanchanIds.has(r.hanchan_id)),
+      carryovers: t.carryovers.filter((r) => r.group_id === G),
     },
     server_time: new Date().toISOString(),
   };
@@ -227,7 +238,10 @@ function save_(auth, records) {
     });
 
     const tables = {};
-    WRITABLE.forEach((name) => { tables[name] = readTable_(name); });
+    WRITABLE.forEach((name) => { tables[name] = readTableIfAny_(name); });
+    names.forEach((name) => {
+      if (!tables[name].sheet) readTable_(name); // 書く先のシートがなければ「シートを準備」を促すエラーにする
+    });
 
     // 一部の列だけ送られてくる（例：論理削除で id と deleted だけ）ことがあるので、
     // 既存の行に送られた値を重ねた「保存後の姿」で検査する
@@ -284,6 +298,8 @@ function ownership_(G, tables, records) {
         return hanchanIds.has(row.hanchan_id);
       case 'members':
         return memberIds.has(row.id);
+      case 'carryovers':
+        return row.group_id === G && memberIds.has(row.member_id);
       default:
         return false;
     }
@@ -322,6 +338,12 @@ function readTable_(name) {
     rawById[obj.id] = values[r];
   }
   return { name, sheet, header, types, rows, byId, rowNumberById, rawById };
+}
+
+// シートがまだなければ空の表を返す（新しい版で足したシートを、「シートを準備」の前でも読めるように）
+function readTableIfAny_(name) {
+  if (ss_().getSheetByName(name)) return readTable_(name);
+  return { name, sheet: null, header: [], types: typesOf_(name), rows: [], byId: {}, rowNumberById: {}, rawById: {} };
 }
 
 function fromCell_(v, type) {
@@ -593,16 +615,23 @@ function saveGroup_(group) {
   if (minGames !== null && !(Number.isInteger(minGames) && minGames >= 0)) {
     throw new Error('規定半荘数は 0 以上の整数にしてください');
   }
+  // 切替日は送られてきたときだけ変える（空にすると繰り越しを使わない）
+  const hasCutover = group.cutover_date !== undefined;
+  const cutover = hasCutover ? String(group.cutover_date || '').trim() : '';
+  if (cutover && !/^\d{4}-\d{2}-\d{2}$/.test(cutover)) throw new Error('切替日は 2026-11-07 の形にしてください');
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
   try {
     const groups = readTable_('groups');
     // 段階4で足した列。シートが古いままだと黙って捨てられるので、先に知らせる
     if (groups.header.indexOf('min_games') < 0) throw new Error('groups シートに min_games 列がありません（メニュー「麻雀録 → シートを準備」を実行）');
+    if (hasCutover && groups.header.indexOf('cutover_date') < 0) throw new Error('groups シートに cutover_date 列がありません（メニュー「麻雀録 → シートを準備」を実行）');
     if (group.id && (!groups.byId[group.id] || groups.byId[group.id].deleted)) throw new Error('グループがありません: ' + group.id);
     const id = group.id || newGroupId_();
     if (groups.rows.some((g) => !g.deleted && g.id !== id && g.name === name)) throw new Error('同じ名前のグループがあります: ' + name);
-    upsert_(groups, [{ id: id, name: name, min_games: minGames }]);
+    const row = { id: id, name: name, min_games: minGames };
+    if (hasCutover) row.cutover_date = cutover;
+    upsert_(groups, [row]);
     return readTable_('groups').byId[id];
   } finally {
     lock.releaseLock();

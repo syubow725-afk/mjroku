@@ -141,16 +141,29 @@ export function filterSessions(sessions, { from = '', to = '', rule = '' } = {})
 //   rankRates … 1〜4 着の率／topRate … トップ率／rentaiRate … 連対率（1・2 着）／lastAvoidRate … ラス回避率
 //   scoredGames … 素点が分かる半荘の数／tobi … そのうち素点がマイナスだった回数／tobiRate … 飛び率
 //     pt で入れた半荘は素点が分からないので、飛び率の分母に入れない
-export function aggregate(tables, sessionIds) {
+//
+// carry … 本家からの繰り越し（effectiveCarryovers の戻り値）。渡すと、スコア・チップ・収支・半荘数に足す（全期間の集計だけで渡す）
+//   日数は本アプリで対局した日の数に、繰り越しの日数を足す
+//   繰り越しには着順がないので、着順の数・率・飛びは本アプリに入れた分だけで数える
+//   ratedGames … 率の分母になる半荘の数（＝ games − 繰り越しの半荘数）。率のランキングの規定半荘数もこれで比べる
+//   carried … 繰り越しを足した人に、足した値 { pt10, chips, subtotal, balance, games } を入れる
+export function aggregate(tables, sessionIds, carry = []) {
   const byMember = new Map();
+  const row = (memberId) => {
+    if (!byMember.has(memberId)) {
+      byMember.set(memberId, {
+        memberId, sessions: 0, dates: new Set(), games: 0, rankCounts: [0, 0, 0, 0],
+        pt10: 0, chips: 0, subtotal: 0, balance: 0, scoredGames: 0, tobi: 0, carried: null,
+        days: 0, // ここには繰り越しの日数だけを入れ、最後に対局した日の数（dates）を足す
+      });
+    }
+    return byMember.get(memberId);
+  };
   for (const id of sessionIds) {
     const model = buildSession(tables, id);
     if (!model || !model.hanchans.length) continue;
     for (const s of model.summary) {
-      const a = byMember.get(s.memberId) || {
-        memberId: s.memberId, sessions: 0, dates: new Set(), games: 0, rankCounts: [0, 0, 0, 0],
-        pt10: 0, chips: 0, subtotal: 0, balance: 0, scoredGames: 0, tobi: 0,
-      };
+      const a = row(s.memberId);
       a.sessions += 1;
       a.dates.add(model.session.date);
       a.games += s.games;
@@ -159,7 +172,6 @@ export function aggregate(tables, sessionIds) {
       a.chips += s.chips;
       a.subtotal += s.subtotal;
       a.balance += s.balance;
-      byMember.set(s.memberId, a);
     }
     for (const { results } of model.hanchans) {
       for (const r of Object.values(results)) {
@@ -170,9 +182,64 @@ export function aggregate(tables, sessionIds) {
       }
     }
   }
+  const ratedGames = new Map([...byMember.values()].map((a) => [a.memberId, a.games]));
+  for (const c of carry) {
+    const a = row(c.memberId);
+    for (const key of CARRY_KEYS) a[key] += c.carry[key];
+    a.carried = c.carry;
+  }
   return [...byMember.values()]
-    .map(({ dates, ...a }) => ({ ...a, days: dates.size, ...rates(a) }))
+    .map(({ dates, ...a }) => {
+      const rated = ratedGames.get(a.memberId) ?? 0;
+      return { ...a, days: dates.size + a.days, ratedGames: rated, ...rates({ ...a, games: rated }) };
+    })
     .sort((x, y) => y.balance - x.balance);
+}
+
+// ---------------------------------------------------------------------------
+// 本家からの繰り越し（仕様書 9 章）
+//
+// carryovers シートに、切替日時点の本家「全件集計」の値（本家通算）をメンバーごとに置く。
+// 切替日（groups.cutover_date）より前の対局を本アプリに手入力したら、その分を繰り越しから自動で減らす。
+//   繰り越し ＝ 本家通算 − 手入力済みの切替日前の対局の合計
+// 過去の対局をすべて入れ終えると繰り越しは 0 になる（0 にならなければ入力漏れか誤り＝検算になる）。
+// どちらで数えても「繰り越し ＋ 本アプリの対局」は本家通算＋切替日以降の対局になり、二重には数えない
+// ---------------------------------------------------------------------------
+
+// 繰り越しで足し引きする値。pt10 … スコア／chips … チップ／subtotal … 収支（ゲーム代別）／balance … ゲーム代込収支
+//   games … 半荘数／days … 日数（同じ日に 2 つ対局があっても 1 日）
+export const CARRY_KEYS = ['pt10', 'chips', 'subtotal', 'balance', 'games', 'days'];
+
+const intOr0 = (v) => (v === '' || v == null ? 0 : Number(v));
+
+// carryovers の 1 行（シートの値。スコアは pt の小数）を内部の整数にする
+export function carryBase(row) {
+  return {
+    pt10: toPt10(row.pt) ?? 0,
+    chips: intOr0(row.chips),
+    subtotal: intOr0(row.subtotal),
+    balance: intOr0(row.balance),
+    games: intOr0(row.games),
+    days: intOr0(row.days),
+  };
+}
+
+// 実際に足す繰り越しを、繰り越しの行があるメンバーごとに返す。
+//   [{ memberId, base（本家通算）, entered（手入力済みの切替日前の合計）, carry（＝ base − entered） }]
+// 切替日が空なら繰り越しは使わない（[]）。繰り越しの行がない人（ゲストなど）の過去対局は、減らす先がないのでそのまま数える
+export function effectiveCarryovers(tables, cutoverDate) {
+  if (!cutoverDate) return [];
+  const rows = Object.values(tables.carryovers || {}).filter(alive);
+  if (!rows.length) return [];
+  const before = Object.values(tables.sessions).filter((s) => alive(s) && s.date < cutoverDate).map((s) => s.id);
+  const entered = new Map(aggregate(tables, before).map((a) => [a.memberId, a]));
+  return rows.map((r) => {
+    const base = carryBase(r);
+    const e = entered.get(r.member_id);
+    const done = Object.fromEntries(CARRY_KEYS.map((k) => [k, e ? e[k] : 0]));
+    const carry = Object.fromEntries(CARRY_KEYS.map((k) => [k, base[k] - done[k]]));
+    return { memberId: r.member_id, base, entered: done, carry };
+  });
 }
 
 // 回数から率を出す（表示用。金額や pt と違い、小数で持って良い）
@@ -322,8 +389,9 @@ export function rankBy(rows, value) {
 
 // 率のランキング：規定半荘数（minGames）以上の人だけに順位を付ける。
 // 届かない人（率が出ない半荘 0 の人も含む）は消さずに below に率の高い順で入れる（画面では「規定未満」として下にまとめる）
+// 規定と比べるのは率の分母の半荘数（ratedGames。本家からの繰り越し分は着順がないので入れない）
 export function rankWithMinimum(rows, value, minGames) {
-  const qualified = (r) => r.games >= minGames && value(r) != null;
+  const qualified = (r) => (r.ratedGames ?? r.games) >= minGames && value(r) != null;
   const below = rows
     .filter((r) => !qualified(r))
     .map((row) => ({ row, value: value(row) }))

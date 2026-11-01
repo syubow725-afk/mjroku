@@ -52,8 +52,20 @@ test('rankByPt：pt の高い順、同 pt は列順が前の人が上', () => {
   assert.deepEqual(rankByPt([-100, 200, 200, -300]), [3, 1, 2, 4]);
 });
 
-test('splitEvenly：10P 単位に切り捨て、余りは先頭（仕様書 7.2 の例）', () => {
+test('splitEvenly：本家 25 件で確かめた 7 例と同じに割る', () => {
+  // 割り切れれば 10P に丸めない
+  assert.deepEqual(splitEvenly(7100, 4), [1775, 1775, 1775, 1775]);
+  assert.deepEqual(splitEvenly(12140, 5), [2428, 2428, 2428, 2428, 2428]);
+  // 割り切れなければ 10P 単位の最も近い値に丸め、足りない分は先頭に足す
   assert.deepEqual(splitEvenly(4450, 4), [1120, 1110, 1110, 1110]);
+  assert.deepEqual(splitEvenly(4850, 4), [1220, 1210, 1210, 1210]);
+  assert.deepEqual(splitEvenly(7650, 4), [1920, 1910, 1910, 1910]);
+  assert.deepEqual(splitEvenly(3850, 3), [1290, 1280, 1280]);
+  // 多すぎる分は最後の人から引く
+  assert.deepEqual(splitEvenly(8550, 4), [2140, 2140, 2140, 2130]);
+});
+
+test('splitEvenly：そのほかの場合', () => {
   assert.deepEqual(splitEvenly(9000, 4), [2250, 2250, 2250, 2250]);
   assert.deepEqual(splitEvenly(10000, 3), [3340, 3330, 3330]);
   assert.deepEqual(splitEvenly(0, 4), [0, 0, 0, 0]);

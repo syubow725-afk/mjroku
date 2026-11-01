@@ -76,13 +76,20 @@ export function rankByPt(pts10) {
 // ゲーム代（仕様書 7.2）
 // ---------------------------------------------------------------------------
 
-// total を n 人で均等割りする。10P 単位に切り捨て、余りは先頭の人に寄せる（本家の挙動）。
-// 例：4,450 ÷ 4 → 1,110 ずつだと 4,440 で 10 余る → [1120, 1110, 1110, 1110]
+// total を n 人で均等割りする（本家の挙動。2026-11-01 本家 25 件の実データで確認）。
+//   割り切れれば、そのまま均等（10P 単位でなくても丸めない）。例：7,100 ÷ 4 → 1,775 ×4
+//   割り切れなければ、1 人分を 10P 単位の最も近い値に丸め、総額との差が
+//     ＋なら先頭の人に足す。例：4,450 ÷ 4 ＝ 1,112.5 → 1,110 ×4 で 10 足りない → [1120, 1110, 1110, 1110]
+//     −なら最後の人から引く。例：8,550 ÷ 4 ＝ 2,137.5 → 2,140 ×4 で 10 多い → [2140, 2140, 2140, 2130]
+//   1 人分がちょうど 5P 端数（例：4,460 ÷ 4 ＝ 1,115）のときは本家の実例がないので、切り上げ（1,120）とする
 export function splitEvenly(total, n) {
   if (n <= 0) return [];
-  const base = Math.floor(total / (n * 10)) * 10;
-  const shares = new Array(n).fill(base);
-  shares[0] += total - base * n;
+  if (total % n === 0) return new Array(n).fill(total / n);
+  const per = Math.round(total / n / 10) * 10;
+  const shares = new Array(n).fill(per);
+  const diff = total - per * n;
+  if (diff > 0) shares[0] += diff;
+  else shares[n - 1] += diff;
   return shares;
 }
 
