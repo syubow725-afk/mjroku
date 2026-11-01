@@ -21,6 +21,8 @@
  *   シートを準備           … シートと見出しを作る（何度実行しても良い。足りない列だけ足す）
  *   合言葉を設定           … グループの合言葉を入れる。シートにはハッシュだけを保存する
  *   管理者の合言葉を設定   … 管理者の合言葉を入れる。スクリプトのプロパティにハッシュだけを保存する
+ *   片付けの候補を書き出す … テストで入れた対局・メンバーを探して、シート「片付け候補」に書く（何も消さない）
+ *   片付けの候補を削除     … 「片付け候補」で選んだ対局・メンバーを、関係する行ごと消す（元に戻せない）
  */
 
 // ---------------------------------------------------------------------------
@@ -417,6 +419,9 @@ function onOpen() {
     .addItem('シートを準備', 'setupSheets')
     .addItem('合言葉を設定', 'setPasscode')
     .addItem('管理者の合言葉を設定', 'setAdminPasscode')
+    .addSeparator()
+    .addItem('片付けの候補を書き出す', 'listCleanup')
+    .addItem('片付けの候補を削除', 'deleteCleanup')
     .addToUi();
 }
 
@@ -663,4 +668,159 @@ function newGroupId_() {
   let id = 'g_';
   for (let i = 0; i < 10; i++) id += chars.charAt(Math.floor(Math.random() * chars.length));
   return id;
+}
+
+// ---------------------------------------------------------------------------
+// テストデータの片付け（メニュー。2026-11-01、本家からの取り込みの前に 1 回だけ使う）
+//   1.「片付けの候補を書き出す」… 日付と名前で候補を探し、シート「片付け候補」に書く。何も消さない
+//   2. 施主が「片付け候補」を見て、残すものの「消す」のチェックを外す
+//   3.「片付けの候補を削除」… チェックの付いた対局・メンバーを、関係する行ごと物理的に消す
+// 対局を消すときは、その参加者・半荘・成績も消す。メンバーを消すときは、その所属と繰り越しも消す。
+// 候補外の対局に出ているメンバーは消さない（成績が壊れるため）。アプリの論理削除と違い元に戻せないので、
+// 先にスプレッドシートを丸ごとコピーしてバックアップを取ること
+// ---------------------------------------------------------------------------
+
+const CLEANUP_SHEET = '片付け候補';
+
+function cleanupTables_() {
+  const t = {};
+  ['groups'].concat(WRITABLE).forEach((name) => { t[name] = readTableIfAny_(name); });
+  return t;
+}
+
+// 対局・メンバーから、一緒に消す行を集める。{ シート名: Set(id) }
+function cleanupTargets_(t, sessionIds, memberIds) {
+  const out = {};
+  WRITABLE.forEach((name) => { out[name] = new Set(); });
+  sessionIds.forEach((id) => out.sessions.add(id));
+  t.participants.rows.filter((r) => out.sessions.has(r.session_id)).forEach((r) => out.participants.add(r.id));
+  t.hanchans.rows.filter((r) => out.sessions.has(r.session_id)).forEach((r) => out.hanchans.add(r.id));
+  t.results.rows.filter((r) => out.hanchans.has(r.hanchan_id)).forEach((r) => out.results.add(r.id));
+  memberIds.forEach((id) => out.members.add(id));
+  t.group_members.rows.filter((r) => out.members.has(r.member_id)).forEach((r) => out.group_members.add(r.id));
+  t.carryovers.rows.filter((r) => out.members.has(r.member_id)).forEach((r) => out.carryovers.add(r.id));
+  return out;
+}
+
+// 消す対局のほかに、そのメンバーが出ている対局の日付（あれば、そのメンバーは消さない）
+function otherAppearances_(t, memberId, sessionIds) {
+  const hanchanSession = {};
+  t.hanchans.rows.forEach((h) => { hanchanSession[h.id] = h.session_id; });
+  const ids = t.participants.rows.filter((p) => p.member_id === memberId).map((p) => p.session_id)
+    .concat(t.results.rows.filter((r) => r.member_id === memberId).map((r) => hanchanSession[r.hanchan_id]))
+    .filter((id) => !sessionIds.has(id));
+  const dates = {};
+  ids.forEach((id) => { dates[t.sessions.byId[id] ? t.sessions.byId[id].date : '?'] = true; });
+  return Object.keys(dates).sort();
+}
+
+function countText_(targets) {
+  return WRITABLE.filter((n) => targets[n].size).map((n) => n + ' ' + targets[n].size + ' 行').join('、') || 'なし';
+}
+
+function listCleanup() {
+  const ui = SpreadsheetApp.getUi();
+  const ask = (text, fallback) => {
+    const r = ui.prompt('片付けの候補', text + '\n空欄なら：' + fallback, ui.ButtonSet.OK_CANCEL);
+    if (r.getSelectedButton() !== ui.Button.OK) return null;
+    const v = r.getResponseText().trim() || fallback;
+    return v.split(/[,、\s]+/).map((x) => x.trim()).filter(Boolean);
+  };
+  const dates = ask('消す対局の日付（YYYY-MM-DD、カンマ区切り）', '2026-10-29,2026-10-31');
+  if (!dates) return;
+  const names = ask('消すメンバーの名前（カンマ区切り。完全一致）', '木村,あ,い,う,え,お');
+  if (!names) return;
+
+  const t = cleanupTables_();
+  const memberName = (id) => (t.members.byId[id] ? t.members.byId[id].name : id);
+  const groupName = (id) => (t.groups.byId[id] ? t.groups.byId[id].name : id);
+  const sessions = t.sessions.rows.filter((s) => dates.indexOf(s.date) >= 0);
+  const sessionIds = new Set(sessions.map((s) => s.id));
+  const rows = [['消す', 'シート', 'id', '内容']];
+
+  sessions.forEach((s) => {
+    const people = t.participants.rows.filter((p) => p.session_id === s.id && !p.deleted)
+      .sort((a, b) => a.col_order - b.col_order).map((p) => memberName(p.member_id));
+    const hanchans = t.hanchans.rows.filter((h) => h.session_id === s.id && !h.deleted).length;
+    rows.push([true, 'sessions', s.id, [s.date, groupName(s.group_id), s.title || '（対局名なし）',
+      '参加：' + people.join('・'), hanchans + ' 半荘', '作成：' + (s.created_by || '—'),
+      s.deleted ? 'アプリで削除済み' : ''].filter(Boolean).join('／')]);
+  });
+
+  const notFound = [];
+  let memberCount = 0;
+  names.forEach((name) => {
+    const found = t.members.rows.filter((m) => m.name === name);
+    if (!found.length) notFound.push(name);
+    found.forEach((m) => {
+      memberCount += 1;
+      const others = otherAppearances_(t, m.id, sessionIds);
+      const groups = t.group_members.rows.filter((g) => g.member_id === m.id).map((g) => groupName(g.group_id));
+      rows.push([others.length === 0, 'members', m.id, [m.name, '所属：' + (groups.join('・') || 'なし'),
+        others.length ? '消さない：候補外の対局（' + others.join('・') + '）に出ている' : '候補の対局にだけ出ている（または出ていない）',
+        m.deleted ? 'アプリで削除済み' : ''].filter(Boolean).join('／')]);
+    });
+  });
+
+  const ss = ss_();
+  const old = ss.getSheetByName(CLEANUP_SHEET);
+  if (old) ss.deleteSheet(old);
+  const sheet = ss.insertSheet(CLEANUP_SHEET);
+  sheet.getRange(1, 1, rows.length, 4).setValues(rows);
+  if (rows.length > 1) sheet.getRange(2, 1, rows.length - 1, 1).insertCheckboxes();
+  sheet.setFrozenRows(1);
+
+  const targets = cleanupTargets_(t, sessionIds, rows.slice(1).filter((r) => r[1] === 'members' && r[0]).map((r) => r[2]));
+  ui.alert('片付けの候補',
+    '対局 ' + sessions.length + ' 件、メンバー ' + memberCount + ' 人をシート「' + CLEANUP_SHEET + '」に書きました。\n'
+    + 'チェックのとおりに消すと消える行：' + countText_(targets) + '\n'
+    + (notFound.length ? '見つからなかった名前：' + notFound.join('、') + '\n' : '')
+    + 'まだ何も消していません。残すもののチェックを外してから「片付けの候補を削除」を実行してください。',
+    ui.ButtonSet.OK);
+}
+
+function deleteCleanup() {
+  const ui = SpreadsheetApp.getUi();
+  const sheet = ss_().getSheetByName(CLEANUP_SHEET);
+  if (!sheet) {
+    ui.alert('先に「片付けの候補を書き出す」を実行してください。');
+    return;
+  }
+  const lock = LockService.getScriptLock();
+  lock.waitLock(20000); // アプリからの保存と重ならないように
+  try {
+    const t = cleanupTables_();
+    const picked = sheet.getDataRange().getValues().slice(1).filter((r) => r[0] === true);
+    const sessionIds = new Set(picked.filter((r) => r[1] === 'sessions').map((r) => String(r[2])));
+    // 書き出した後で別の対局に出るようになったメンバーや、チェックを外した対局に出ているメンバーは消さない
+    const skipped = [];
+    const memberIds = picked.filter((r) => r[1] === 'members').map((r) => String(r[2])).filter((id) => {
+      const ok = otherAppearances_(t, id, sessionIds).length === 0;
+      if (!ok) skipped.push(t.members.byId[id] ? t.members.byId[id].name : id);
+      return ok;
+    });
+    const targets = cleanupTargets_(t, sessionIds, memberIds);
+    const total = WRITABLE.reduce((n, name) => n + targets[name].size, 0);
+    if (!total) {
+      ui.alert('消すものがありません。');
+      return;
+    }
+    const answer = ui.alert('片付けの候補を削除',
+      '次の行をスプレッドシートから消します。元に戻せません（バックアップのコピーは取りましたか）。\n' + countText_(targets)
+      + (skipped.length ? '\nほかの対局に出ているので消さないメンバー：' + skipped.join('、') : ''),
+      ui.ButtonSet.OK_CANCEL);
+    if (answer !== ui.Button.OK) return;
+
+    WRITABLE.forEach((name) => {
+      const table = t[name];
+      if (!table.sheet) return;
+      // 下の行から消す（上から消すと、後の行番号がずれる）
+      Array.from(targets[name]).map((id) => table.rowNumberById[id]).filter(Boolean)
+        .sort((a, b) => b - a).forEach((row) => table.sheet.deleteRow(row));
+    });
+    ss_().deleteSheet(sheet);
+    ui.alert('片付けの候補を削除', '消しました：' + countText_(targets) + '\nアプリは次の同期で反映されます。', ui.ButtonSet.OK);
+  } finally {
+    lock.releaseLock();
+  }
 }
