@@ -74,13 +74,13 @@ function twoGroups({ config, storage = memoryStorage(), remember } = {}) {
   const gas = { calls: [], offline: false, hold: null };
   const api = {
     save: async (c, records) => {
-      if (gas.offline) throw new Error('通信できません');
+      if (gas.offline) throw Object.assign(new Error('通信できません'), { network: true });
       gas.calls.push({ action: 'save', passcode: c.passcode, groupId: c.groupId, records });
       if (gas.hold) await gas.hold;
       return { ok: true };
     },
     load: async (c) => {
-      if (gas.offline) throw new Error('通信できません');
+      if (gas.offline) throw Object.assign(new Error('通信できません'), { network: true });
       const id = PASS[c.passcode];
       gas.calls.push({ action: 'load', passcode: c.passcode });
       return { ok: true, role: 'member', group: GROUPS[id], groups: null, data: { ...emptyData, sessions: [{ id: `s_${id}`, group_id: id }] } };
@@ -189,24 +189,86 @@ test('Store：送信待ちが多いときは分けて送る。途中で切れて
   const config = { gasUrl: 'u', passcode: 'pa', groupId: 'g_a' };
   const { store, gas } = twoGroups({ config });
   await store.sync();
-  // 対局 1 つ＋成績 450 行（取り込みの大きさ）
-  const results = Array.from({ length: 450 }, (_, i) => ({ id: `r_${i}`, hanchan_id: 'h_1' }));
+  // 対局 1 つ・半荘 1 つ＋成績 449 行（取り込みの大きさ）
+  const results = Array.from({ length: 449 }, (_, i) => ({ id: `r_${i}`, hanchan_id: 'h_1' }));
   gas.offline = true;
-  store.write({ results, sessions: [{ id: 's_big', group_id: 'g_a' }] });
+  store.write({ results, hanchans: [{ id: 'h_1', session_id: 's_big' }], sessions: [{ id: 's_big', group_id: 'g_a' }] });
   await store.sync();
   assert.equal(store.pendingCount(), 451);
   // 2 回目の save で通信が切れる
   gas.offline = false;
   let saves = 0;
   const save = store.api.save;
-  store.api.save = async (c, r) => { saves += 1; if (saves === 2) throw new Error('時間切れ'); return save(c, r); };
+  store.api.save = async (c, r) => { saves += 1; if (saves === 2) throw Object.assign(new Error('時間切れ'), { network: true }); return save(c, r); };
   await store.sync();
   const first = gas.calls.filter((c) => c.action === 'save')[0].records;
-  assert.deepEqual(Object.keys(first), ['sessions', 'results'], '親の対局が先');
-  assert.equal(first.sessions.length + first.results.length, 200);
+  assert.deepEqual(Object.keys(first), ['sessions', 'hanchans', 'results'], '親の対局・半荘が先');
+  assert.equal(Object.values(first).flat().length, 200);
   assert.equal(store.pendingCount(), 251, '1 回目の 200 行は外れた');
   store.api.save = save;
   await store.sync();
   assert.equal(store.pendingCount(), 0);
   assert.deepEqual(gas.calls.filter((c) => c.action === 'save').map((c) => Object.values(c.records).flat().length), [200, 200, 51]);
+});
+
+test('Store：シートで行ごと消した対局は、同期で端末からも消える。消えた対局への送信待ちは外して、読み込みは止めない', async () => {
+  const config = { gasUrl: 'u', passcode: 'pa', groupId: 'g_a' };
+  const sheet = { sessions: [{ id: 's_test', group_id: 'g_a', date: '2026-10-29' }], participants: [{ id: 's_test:m_k', session_id: 's_test', member_id: 'm_k' }], members: [{ id: 'm_k', name: 'テスト' }] };
+  const calls = [];
+  const api = {
+    load: async () => ({ ok: true, role: 'admin', group: { id: 'g_a', name: 'いつもの' }, groups: [], data: { ...emptyData, ...sheet } }),
+    // 本物の GAS と同じく、シートに無い対局の参加者は「グループ外」として断る
+    save: async (c, records) => {
+      calls.push(records);
+      const ids = new Set(sheet.sessions.map((s) => s.id).concat((records.sessions || []).map((s) => s.id)));
+      if ((records.participants || []).some((p) => !ids.has(p.session_id ?? sheet.participants.find((x) => x.id === p.id)?.session_id))) {
+        throw new Error('グループ外のデータ: participants');
+      }
+      return { ok: true };
+    },
+  };
+  const store = new Store({ api, getConfig: () => config, storage: memoryStorage() });
+  await store.sync();
+  assert.deepEqual(store.list('sessions').map((s) => s.id), ['s_test']);
+
+  // 端末でチップを直した（まだ送っていない）間に、シートで行ごと消された
+  const gasSave = api.save;
+  store.api.save = async () => { throw Object.assign(new Error('通信できません'), { network: true }); };
+  store.write({ participants: [{ id: 's_test:m_k', chips: 5 }], members: [{ id: 'm_new', name: '新しい人' }] });
+  await store.sync();
+  assert.equal(store.pendingCount(), 2);
+  sheet.sessions = [];
+  sheet.participants = [];
+  sheet.members = [];
+
+  // 電波がない間は、端末のデータを残す（シートを読めていないので）
+  await store.sync();
+  assert.deepEqual(store.list('sessions').map((s) => s.id), ['s_test']);
+
+  // 電波が戻る：消えた対局への変更は GAS に断られるが、読み込みはして、端末からも消す
+  store.api.save = gasSave;
+  await store.sync();
+  assert.deepEqual(store.list('sessions'), [], '消した対局は端末にも無い');
+  assert.deepEqual(store.list('participants'), []);
+  assert.equal(store.pendingCount(), 0, '消えた対局への変更は外し、新しいメンバーは送った');
+  assert.match(store.notice, /シートで消えた行への変更 1 件/);
+  assert.equal(store.error, null);
+  assert.deepEqual(calls.at(-1).members.map((m) => m.id), ['m_new']);
+});
+
+test('pruneOrphans：シートにある行への変更と、新しく作った行は残す', async () => {
+  const { pruneOrphans } = await import('../app/js/store.js');
+  const server = { ...Object.fromEntries(['members', 'group_members', 'rules', 'sessions', 'participants', 'hanchans', 'results', 'carryovers'].map((s) => [s, {}])),
+    sessions: { s_1: { id: 's_1' } }, hanchans: { h_1: { id: 'h_1', session_id: 's_1' } } };
+  const outbox = {
+    sessions: { s_1: { id: 's_1', title: '直した' }, s_new: { id: 's_new', created_at: 't', group_id: 'g' }, s_gone: { id: 's_gone', title: 'x' } },
+    participants: { 's_new:m': { id: 's_new:m', created_at: 't', session_id: 's_new' }, 's_gone2:m': { id: 's_gone2:m', created_at: 't', session_id: 's_gone2' } },
+    hanchans: { h_1: { id: 'h_1', input_mode: 'pt' } },
+    results: { 'h_1:m': { id: 'h_1:m', created_at: 't', hanchan_id: 'h_1' }, 'h_x:m': { id: 'h_x:m', created_at: 't', hanchan_id: 'h_x' } },
+  };
+  assert.equal(pruneOrphans(server, outbox), 3);
+  assert.deepEqual(Object.keys(outbox.sessions), ['s_1', 's_new']);
+  assert.deepEqual(Object.keys(outbox.participants), ['s_new:m']);
+  assert.deepEqual(Object.keys(outbox.hanchans), ['h_1']);
+  assert.deepEqual(Object.keys(outbox.results), ['h_1:m']);
 });

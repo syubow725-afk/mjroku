@@ -16,7 +16,7 @@ import { carryListView, carryEditView } from './views/carry.js';
 import { importView } from './views/import.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '0.6.2';
+const APP_VERSION = '0.6.3';
 
 const store = new Store({
   api,

@@ -15,8 +15,10 @@ async function request(url, init) {
       throw new Error('GAS の応答を読めません（URL かデプロイ設定を確認）');
     }
   } catch (err) {
-    if (err.name === 'AbortError') throw new Error('時間切れ（電波を確認）');
-    if (err instanceof TypeError) throw new Error('通信できません（電波を確認）');
+    // 通信そのものの失敗には network を付ける（GAS が断ったときと分けるため。store.js の同期で使う）
+    const network = (message) => Object.assign(new Error(message), { network: true });
+    if (err.name === 'AbortError') throw network('時間切れ（電波を確認）');
+    if (err instanceof TypeError) throw network('通信できません（電波を確認）');
     throw err;
   } finally {
     clearTimeout(timer);

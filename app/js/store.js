@@ -51,6 +51,31 @@ export function countOutbox(outbox) {
   return SHEETS.reduce((n, s) => n + Object.keys(outbox[s] || {}).length, 0);
 }
 
+// シートにもう無い行への送信待ちを外し、外した件数を返す（outbox を書き換える）。server は load したばかりのもの。
+//   ・端末で新しく作った行でない（created_at がない＝既存の行への変更）のに、シートに無い行
+//     … シート側で行ごと消された行への変更。送っても GAS が受け付けない
+//   ・親（参加者・半荘 → 対局、成績 → 半荘）がシートにも送信待ちにも無い行
+// これらが残ると、送信のたびに GAS に断られ、ほかの変更も届かなくなる
+export function pruneOrphans(server, outbox) {
+  let removed = 0;
+  const drop = (sheet, id) => { delete outbox[sheet][id]; removed += 1; };
+  const has = (sheet, id) => Boolean(server[sheet]?.[id] || outbox[sheet]?.[id]);
+  for (const sheet of SHEETS) {
+    for (const [id, row] of Object.entries(outbox[sheet] || {})) {
+      if (!row.created_at && !server[sheet]?.[id]) drop(sheet, id);
+    }
+  }
+  const parentOf = { participants: ['sessions', 'session_id'], hanchans: ['sessions', 'session_id'], results: ['hanchans', 'hanchan_id'] };
+  for (const sheet of ['participants', 'hanchans', 'results']) {
+    const [parent, key] = parentOf[sheet];
+    for (const [id, row] of Object.entries(outbox[sheet] || {})) {
+      const parentId = row[key] ?? server[sheet]?.[id]?.[key];
+      if (parentId && !has(parent, parentId)) drop(sheet, id);
+    }
+  }
+  return removed;
+}
+
 // 送信に成功した行を outbox から外す。
 // 送信中にさらに変更された行（updated_at が送ったものと違う）は、次回また送るため残す
 export function removeSent(outbox, sent) {
@@ -123,6 +148,7 @@ export class Store {
     this.lastSync = null;   // 最後に load できた時刻
     this.syncing = false;
     this.error = null;
+    this.notice = null;     // 同期で起きたことの知らせ（シートで消えた行への送信待ちを外した、など）
     this.otherPending = 0;  // 表示中でないグループの送信待ちの件数
     this.otherErrors = {};  // 表示中でないグループの送信待ちを送れなかった理由（グループ ID → 文言）
     this.seq = 0;           // グループを切り替えるたびに増やす。切り替え前に始めた同期の結果を捨てるため
@@ -379,11 +405,19 @@ export class Store {
       await this.flushOthers(config);
       // 途中でグループを切り替えたら、ここでやめる（切り替えた先は switchTo が続けて同期する）
       if (seq !== this.seq) return;
-      // 分けて送り、届いた回の分から送信待ちを外す（途中で切れても、届いた分は送り直さない）
-      for (const chunk of outboxChunks(clone(this.outbox))) {
-        await this.api.save(config, chunk.records);
-        this.markSent(slotId, chunk.sent);
-        if (seq !== this.seq) return;
+      // 分けて送り、届いた回の分から送信待ちを外す（途中で切れても、届いた分は送り直さない）。
+      // 電波がないときはここでやめる。GAS が断ったときは、シートの今の中身を読み込みには進む
+      // （断られたまま読み込まないと、シートで消した行が端末に残り続けるため）
+      let saveError = null;
+      try {
+        for (const chunk of outboxChunks(clone(this.outbox))) {
+          await this.api.save(config, chunk.records);
+          this.markSent(slotId, chunk.sent);
+          if (seq !== this.seq) return;
+        }
+      } catch (err) {
+        if (err.network || seq !== this.seq) throw err;
+        saveError = err;
       }
       const res = await this.api.load(config);
       if (seq !== this.seq) return; // 前のグループのデータなので捨てる
@@ -392,12 +426,20 @@ export class Store {
       const json = JSON.stringify([res.group, res.role, res.groups, res.data]);
       changed = json !== this.loadedJson;
       this.loadedJson = json;
+      // 端末の中身はシートの今の中身に置き換える（シートで行ごと消した行は、ここで端末からも消える）。
+      // 残すのは送信待ちだけで、そのうちシートにもう無い行への変更は外す
       this.server = indexRows(res.data);
+      const pruned = pruneOrphans(this.server, this.outbox);
+      if (pruned) {
+        this.notice = `シートで消えた行への変更 ${pruned} 件を、送信待ちから外しました`;
+        changed = true;
+        if (this.pendingCount() > 0) this.again = true; // 残りの送信待ちを送り直す
+      }
       this.group = res.group;
       this.role = res.role === 'admin' ? 'admin' : 'member';
       this.groups = res.groups || null;
       this.lastSync = new Date().toISOString();
-      this.error = null;
+      this.error = saveError && !pruned ? `送れない変更があります：${saveError.message}` : null;
       this.persist();
       this.remember(config, res);
     } catch (err) {

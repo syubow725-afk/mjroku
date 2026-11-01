@@ -87,6 +87,7 @@ export function settingsView(ctx) {
       h('dt', null, '送信待ち'), h('dd', null, `${pending} 件`,
         store.otherPending > 0 ? `（ほかのグループに ${store.otherPending} 件）` : null),
       store.error ? [h('dt', null, 'エラー'), h('dd', { class: 'ng' }, store.error)] : null,
+      store.notice ? [h('dt', null, 'お知らせ'), h('dd', null, store.notice)] : null,
     );
     setChildren(actions,
       h('button', { type: 'button', class: 'secondary', disabled: store.syncing, onclick: () => store.sync() },
