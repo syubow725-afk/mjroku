@@ -215,3 +215,16 @@ test('繰り越し：同じ日に 2 つ対局を入れても、日数は 1 日�
   assert.equal(carry.a.entered.games, 11);
   assert.equal(carry.a.carry.days, 2);
 });
+
+test('繰り越しが空なら、集計は今までと同じ（切替日があっても、繰り越しの行を消してあっても）', () => {
+  const t = tablesFrom(...S0926, ...S1002, ...S1023);
+  const ids = allSessionIds(t);
+  const plain = aggregate(t, ids);
+  assert.deepEqual(effectiveCarryovers(t, CUTOVER), [], '繰り越しの行がない');
+  assert.deepEqual(aggregate(t, ids, effectiveCarryovers(t, CUTOVER)), plain);
+  assert.ok(plain.every((r) => r.carried === null && r.ratedGames === r.games), '繰り越しの印は付かない');
+  const removed = tablesFrom(...S0926, ...S1002, ...S1023, carryRows, { carryovers: carryRows.carryovers.map((r) => ({ id: r.id, deleted: true })) });
+  assert.deepEqual(effectiveCarryovers(removed, CUTOVER), [], '消した繰り越しは使わない');
+  assert.deepEqual(aggregate(removed, ids, effectiveCarryovers(removed, CUTOVER)), plain);
+  assert.deepEqual(effectiveCarryovers(t, undefined), [], '切替日のないグループ');
+});

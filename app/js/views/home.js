@@ -3,7 +3,7 @@
 import { h, formatMoney, signClass } from '../util.js';
 import { formatPt } from '../calc.js';
 import { getConfig } from '../config.js';
-import { memberName, filterSessions, aggregate, memberDailyBalances, periodTotals, opponentStats } from '../model.js';
+import { memberName, filterSessions, aggregate, memberDailyBalances, periodTotals, opponentStats, effectiveCarryovers } from '../model.js';
 import { balanceChart } from './chart.js';
 import { balanceCalendar } from './calendar.js';
 
@@ -40,7 +40,9 @@ export function homeView(ctx) {
   if (state.period !== 'all' && !years.includes(state.period)) state.period = 'all';
   const range = state.period === 'all' ? {} : { from: `${state.period}-01-01`, to: `${state.period}-12-31` };
   const sessions = filterSessions(all, range);
-  const stats = aggregate(t, sessions.map((s) => s.id)).find((r) => r.memberId === state.memberId);
+  // 本家からの繰り越しは全期間のときだけ足す。グラフ・カレンダー・相手別は本アプリの分だけ（仕様書 9.4）
+  const carry = state.period === 'all' ? effectiveCarryovers(t, store.group?.cutover_date) : [];
+  const stats = aggregate(t, sessions.map((s) => s.id), carry).find((r) => r.memberId === state.memberId);
   const sessionIds = sessions.map((s) => s.id);
   const daily = memberDailyBalances(t, sessionIds, state.memberId);
   // 年別グラフ：全期間なら年ごと、年を選んだらその年の月ごと
@@ -81,7 +83,11 @@ function statsBody(s, { points, period, calendar, opponents, t }) {
     h('section', { class: 'card hero' },
       h('div', { class: 'stat-label' }, '収支（ゲーム代込）'),
       h('div', { class: `hero-value ${signClass(s.balance)}` }, formatMoney(s.balance)),
-      h('div', { class: 'muted small' }, 'ゲーム代別 ', h('span', { class: signClass(s.subtotal) }, formatMoney(s.subtotal)))),
+      h('div', { class: 'muted small' }, 'ゲーム代別 ', h('span', { class: signClass(s.subtotal) }, formatMoney(s.subtotal))),
+      s.carried
+        ? h('div', { class: 'muted small' }, 'うち本家からの繰り越し ', h('span', { class: signClass(s.carried.balance) }, formatMoney(s.carried.balance)),
+            `（${s.carried.games} 半荘・${s.carried.days} 日。グラフとカレンダーには入りません）`)
+        : null),
 
     h('section', { class: 'card' },
       h('h2', null, period === 'all' ? '年ごとの収支' : `${period}年の収支`),

@@ -3,7 +3,7 @@ import { h, setChildren, newId, todayStr, formatDate, formatMoney, signClass, re
 import { formatPt } from '../calc.js';
 import { getConfig, isConfigured } from '../config.js';
 import {
-  buildSession, memberName, sessionChanges, ruleSnapshot, filterSessions, aggregate, sessionRule, recomputeScoreResults,
+  buildSession, memberName, sessionChanges, ruleSnapshot, filterSessions, aggregate, sessionRule, recomputeScoreResults, effectiveCarryovers,
   STANDARD_PRESET, presetRow, sortPresets,
 } from '../model.js';
 import { addMember } from './members.js';
@@ -108,7 +108,9 @@ export function summaryView(ctx) {
   const t = store.tables();
   // 半荘のない対局は集計に入らない（aggregate が外す）ので、件数からも外す
   const sessions = filteredSessions(store).filter((s) => buildSession(t, s.id)?.hanchans.length);
-  const rows = aggregate(t, sessions.map((s) => s.id));
+  // 本家からの繰り越しは、絞り込みなし（全件集計）のときだけ足す
+  const carry = filter.period === 'all' && !filter.rule ? effectiveCarryovers(t, store.group?.cutover_date) : [];
+  const rows = aggregate(t, sessions.map((s) => s.id), carry);
 
   const num = (v, format = String) => h('td', { class: signClass(v) }, format(v));
   const pct = (n, d) => (d ? `${Math.round((n / d) * 100)}%` : '—');

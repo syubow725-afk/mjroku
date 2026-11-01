@@ -3,7 +3,7 @@
 import { h, signClass } from '../util.js';
 import { formatPt } from '../calc.js';
 import { getConfig } from '../config.js';
-import { memberName, filterSessions, aggregate, rankBy, rankWithMinimum } from '../model.js';
+import { memberName, filterSessions, aggregate, rankBy, rankWithMinimum, effectiveCarryovers } from '../model.js';
 import { formatRate, formatChips } from './home.js';
 
 // [キー, 表示名, 値の取り出し, 表示の形, 色を付けるか, 率か（規定半荘数を当てる）]
@@ -27,7 +27,9 @@ export function rankingView(ctx) {
   const years = [...new Set(all.map((s) => s.date.slice(0, 4)))].sort().reverse();
   if (state.period !== 'all' && !years.includes(state.period)) state.period = 'all';
   const range = state.period === 'all' ? {} : { from: `${state.period}-01-01`, to: `${state.period}-12-31` };
-  const rows = aggregate(t, filterSessions(all, range).map((s) => s.id));
+  // 本家からの繰り越しは全期間のときだけ足す（年に分けられないため。仕様書 9.4）。入れていなければ空
+  const carry = state.period === 'all' ? effectiveCarryovers(t, store.group?.cutover_date) : [];
+  const rows = aggregate(t, filterSessions(all, range).map((s) => s.id), carry);
 
   const [, label, value, format, colored, isRate] = METRICS.find(([key]) => key === state.metric);
   const minGames = store.minGames; // グループ共通の設定

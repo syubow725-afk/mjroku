@@ -52,7 +52,7 @@
 - GAS のウェブアプリ URL と合言葉はソースに直書きしない。アプリ側は初回起動時に入力させ端末に保存する
 - push したら `npm run check:pages -- --wait` で、GitHub Pages の公開が成功し、公開中の sw.js が手元と同じ版になったことを確かめる（gh は使わない。GitHub の公開 API と公開中の sw.js を見る）
 - 版を上げるときは app/js/app.js の APP_VERSION と app/sw.js の CACHE_VERSION をそろえる。アプリは公開中の sw.js の版と自分の版を比べて「新しい版があります → 更新」の帯を出す（app/js/update.js）
-- GAS の更新は clasp で行う（`.clasp.json` はルートに置き、`gas/` を指す。`.gitignore` 済み）。`clasp push --force` → `clasp redeploy <@HEAD でない方のデプロイ ID>` の順。デプロイ ID は URL の一部なので、表示・記録しない。push と redeploy は施主の OK を取ってから行う。「シートを準備」は施主がスプレッドシートのメニューから実行する
+- GAS の更新は clasp で行う（`.clasp.json` はルートに置き、`gas/` を指す。`.gitignore` 済み）。`clasp push --force` → `clasp redeploy <@HEAD でない方のデプロイ ID>` の順。デプロイ ID は URL の一部なので、表示・記録しない。push と redeploy は施主の OK を取ってから行う。「シートを準備」は施主がスプレッドシートのメニューから実行する（バックアップのコピーにも同じメニューが付くので、本物のスプレッドシートで実行するよう毎回添える）
 - 通信できないときは端末に一時保存し、復帰後に送信する（現場は電波が弱いことがある）
 - 削除は論理削除（`deleted` フラグ）。誤操作から復旧できるようにする
 - 第三者のキャラクター・ロゴ・既存アプリの画面素材は使わない
