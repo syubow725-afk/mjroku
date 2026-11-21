@@ -16,7 +16,7 @@ import { carryListView, carryEditView } from './views/carry.js';
 import { importView } from './views/import.js';
 
 // sw.js の CACHE_VERSION と揃えて上げる
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 
 const store = new Store({
   api,
@@ -158,6 +158,27 @@ window.addEventListener('hashchange', () => {
   render();
   window.scrollTo(0, 0);
 });
+
+// 入力中（キーボードが出ている間）は、下のタブと「更新」の帯を隠し、入力欄を見える範囲の真ん中に寄せる。
+// iPhone ではキーボードが出ると、画面下に固定したタブ・帯がキーボードのすぐ上に来て、入力欄を覆うため
+const isField = (el) => Boolean(el?.matches?.('main input:not([type=checkbox]):not([type=file]), main textarea'));
+const centerField = () => {
+  const el = document.activeElement;
+  if (isField(el)) el.scrollIntoView({ block: 'center' });
+};
+document.addEventListener('focusin', (e) => {
+  if (!isField(e.target)) return;
+  document.body.classList.add('typing');
+  setTimeout(centerField, 300); // キーボードが出きってから
+});
+document.addEventListener('focusout', () => {
+  // 次の入力欄へ移るときは隠したまま（すぐ focusin が来る）
+  setTimeout(() => {
+    if (!isField(document.activeElement)) document.body.classList.remove('typing');
+  }, 100);
+});
+// キーボードの高さが変わったとき（候補の段が出る・消えるなど）も寄せ直す
+window.visualViewport?.addEventListener('resize', centerField);
 
 // 同期のきっかけ：起動時、電波の復帰、アプリに戻ったとき、送信待ちがある間の定期再送
 window.addEventListener('online', () => store.sync());

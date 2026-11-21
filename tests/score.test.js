@@ -168,3 +168,21 @@ test('describeRule：等分のときは 1 行表示に出す', () => {
   assert.equal(describeRule(mleague), '25,000 持ち 30,000 返し・ウマ 10-30・丸めなし・同点は等分');
   assert.equal(describeRule({ ...mleague, umaOka: false }), '25,000 持ち・ウマオカなし・丸めなし');
 });
+
+// 西川卓：25,000 持ち 30,000 返し・ウマなし（オカ +20 はトップ）・五捨六入（2026-11-21 施主確認）
+const nishikawa = normalizeRule({ start_points: 25000, return_points: 30000, uma: '0,0,0,0', uma_oka: true, rounding: 'round5' });
+
+test('西川卓（ウマなし・オカだけ）：2〜4 着は 30,000 との差、トップはオカ込みで合計 0', () => {
+  assert.deepEqual(nishikawa.uma, [0, 0, 0, 0]);
+  assert.equal(nishikawa.umaOka, true);
+  // 40,000／30,000／20,000／10,000 → +30／0／−10／−20
+  assert.deepEqual(scoreToPt([40000, 30000, 20000, 10000], nishikawa).pts10, [300, 0, -100, -200]);
+  // 五捨六入：32,600 → 33,000（+3）、24,500 → 24,000（−6）、2,900 → 3,000（−27）。トップは −(3 − 6 − 27) ＝ +30
+  const r = scoreToPt([40000, 32600, 24500, 2900], nishikawa);
+  assert.deepEqual(r.pts10, [300, 30, -60, -270]);
+  assert.equal(sum(r.pts10), 0);
+  // ウマ・オカなし（25,000 との差だけ）とは違う
+  assert.deepEqual(scoreToPt([40000, 30000, 20000, 10000], { ...nishikawa, umaOka: false }).pts10, [150, 50, -50, -150]);
+  assert.equal(describeRule(nishikawa), '25,000 持ち 30,000 返し・ウマなし・五捨六入');
+  assert.equal(parseUma('0,0,0,0').join(), '0,0,0,0');
+});

@@ -115,6 +115,8 @@ a { color: var(--accent); }
   font-size: 14px;
 }
 .tabbar a.active { color: var(--accent); font-weight: bold; }
+/* 入力中は下のタブと「更新」の帯を隠す（iPhone ではキーボードの上に来て入力欄を覆うため。app.js） */
+body.typing .tabbar, body.typing .update-banner { display: none !important; }
 
 main {
   padding: 12px 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px);

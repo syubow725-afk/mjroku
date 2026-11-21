@@ -1,5 +1,5 @@
 // ルールの設定欄（仕様書 6.1.1）
-//   ruleOptions  … ☑ 端数を丸める（初期は四捨五入）、☑ ウマ・オカあり（10-20／10-30／5-10／自由入力）、
+//   ruleOptions  … ☑ 端数を丸める（初期は四捨五入）、☑ ウマ・オカあり（10-20／10-30／5-10／なし（オカだけ）／自由入力）、
 //                  同点（上家優先／等分）と 1 行表示。
 //                  対局作成画面とルール編集画面の両方で使う
 //   ruleSettings … 対局作成画面用。プリセットの選択と「この設定をルールとして保存」を足したもの
@@ -19,8 +19,10 @@ export function ruleOptions({ initial, base, onChange = () => {} }) {
   const roundCheck = h('input', { type: 'checkbox' });
   const roundSelect = h('select', null, ROUNDING_CHOICES.map((m) => h('option', { value: m }, ROUNDING_LABELS[m])));
   const umaCheck = h('input', { type: 'checkbox' });
+  // 「なし（オカだけ）」はウマが全員 0。返しとの差とオカ（トップ）だけが付く（西川卓：25,000 持ち 30,000 返し・ウマなし）
   const umaSelect = h('select', null,
     UMA_CHOICES.map((u) => h('option', { value: u }, u)),
+    h('option', { value: 'none' }, 'なし（オカだけ）'),
     h('option', { value: 'custom' }, '自由入力'));
   const umaCustom = h('input', { type: 'text', class: 'uma-custom', autocomplete: 'off', placeholder: '例：10-20 または 30,10,-10,-30' });
   // 同点の扱いはウマ・オカがあるときだけ意味を持つ（なしなら素点の差だけで同点は同じ pt）
@@ -34,6 +36,13 @@ export function ruleOptions({ initial, base, onChange = () => {} }) {
     roundSelect.value = rule.rounding !== 'none' ? rule.rounding : 'round4';
     umaCheck.checked = rule.umaOka;
     tieSelect.value = rule.tieBreak || 'seat';
+    if (rule.umaOka && rule.uma.every((v) => v === 0)) {
+      umaSelect.value = 'none';
+      umaCustom.value = '';
+      update();
+      return;
+    }
+    // ウマ・オカなしのときは、チェックを入れ直したときの初期値として 10-20 を選んでおく
     const uma = rule.uma.every((v) => v === 0) ? DEFAULT_UMA : rule.uma;
     const label = umaLabel(uma);
     if (UMA_CHOICES.includes(label)) {
@@ -47,7 +56,9 @@ export function ruleOptions({ initial, base, onChange = () => {} }) {
   }
 
   function read() {
-    const umaChoice = parseUma(umaSelect.value === 'custom' ? umaCustom.value : umaSelect.value);
+    const umaChoice = umaSelect.value === 'none'
+      ? [0, 0, 0, 0]
+      : parseUma(umaSelect.value === 'custom' ? umaCustom.value : umaSelect.value);
     if (umaCheck.checked && !umaChoice) return { error: 'ウマを「10-20」か「30,10,-10,-30」の形で入れてください（合計 0）' };
     const settings = {
       umaOka: umaCheck.checked,

@@ -279,9 +279,11 @@ export function umaLabel(uma) {
 
 // 設定を 1 行で表す（対局作成画面と入力表の見出し用）
 // 例："25,000 持ち 30,000 返し・ウマ 10-20・丸めなし"
+//   ウマ・オカありでウマが全員 0 なら「ウマなし」（オカだけ。西川卓のルール）
 export function describeRule(rule) {
   const n = (v) => v.toLocaleString('ja-JP');
-  const umaPart = rule.umaOka ? ` ${n(rule.ret)} 返し・ウマ ${umaLabel(rule.uma)}` : '・ウマオカなし';
+  const umaText = rule.uma.every((v) => v === 0) ? 'ウマなし' : `ウマ ${umaLabel(rule.uma)}`;
+  const umaPart = rule.umaOka ? ` ${n(rule.ret)} 返し・${umaText}` : '・ウマオカなし';
   const tiePart = rule.umaOka && rule.tieBreak === 'split' ? '・同点は等分' : '';
   return `${n(rule.start)} 持ち${umaPart}・${ROUNDING_LABELS[rule.rounding] || ROUNDING_LABELS.none}${tiePart}`;
 }
