@@ -95,6 +95,12 @@ export function ruleOptions({ initial, base, onChange = () => {} }) {
   return { el, read, apply, update };
 }
 
+// 2 つのルール（計算用の形）が同じ中身か
+function sameRule(a, b) {
+  return a.start === b.start && a.ret === b.ret && a.umaOka === b.umaOka && a.rounding === b.rounding
+    && (a.tieBreak || 'seat') === (b.tieBreak || 'seat') && a.uma.join() === b.uma.join();
+}
+
 // 対局作成画面のルール欄
 //   presets：選べるルールの行、initialPresetId：選んでおくもの、initialRule：編集時の対局のルール
 //   onSaveAsPreset(preset, read)：「この設定をルールとして保存」を押したとき。作った行を返す
@@ -112,7 +118,24 @@ export function ruleSettings({ presets, initialPresetId, initialRule, onSaveAsPr
     return { start: r.start, ret: r.ret };
   };
   const options = ruleOptions({ initial: initialRule || normalizeRule(preset()), base });
-  presetSelect.addEventListener('change', () => options.apply(normalizeRule(preset())));
+
+  // 対局の編集で、対局に保存したルールが今のプリセットの中身と違うとき（あとでプリセットを直した等）は知らせ、
+  // ワンタップで今の中身に合わせられるようにする。同じプリセットを選び直しても change が起きず、古いまま保存されてしまうため
+  const notice = h('div', { class: 'rule-stale' });
+  const showNotice = () => {
+    const current = normalizeRule(preset());
+    const stale = initialRule && !sameRule(initialRule, current) && presetSelect.value === initialPresetId;
+    notice.hidden = !stale;
+    if (!stale) return;
+    notice.replaceChildren(
+      h('p', null, `この対局のルールは、今の「${preset().name}」（${describeRule(current)}）と違います。`),
+      h('button', {
+        type: 'button', class: 'small',
+        onclick: () => { options.apply(current); notice.hidden = true; },
+      }, `今の「${preset().name}」に合わせる`));
+  };
+  showNotice();
+  presetSelect.addEventListener('change', () => { options.apply(normalizeRule(preset())); notice.hidden = true; });
 
   const read = () => {
     const r = options.read();
@@ -139,6 +162,7 @@ export function ruleSettings({ presets, initialPresetId, initialRule, onSaveAsPr
 
   const el = h('div', { class: 'rule-settings' },
     h('label', { class: 'field' }, h('span', null, 'ルール'), presetSelect),
+    notice,
     options.el,
     onSaveAsPreset ? h('div', { class: 'save-as' }, saveAs) : null);
 
