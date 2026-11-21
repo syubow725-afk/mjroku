@@ -5,6 +5,10 @@
   "scripts": {
     "test": "node --test",
     "check:pages": "node scripts/check-pages.mjs",
-    "build:site": "node scripts/build-site.mjs"
+    "build:site": "node scripts/build-site.mjs",
+    "test:e2e": "node scripts/run-e2e.mjs"
+  },
+  "devDependencies": {
+    "puppeteer-core": "^24.0.0"
   }
 }

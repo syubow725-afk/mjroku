@@ -36,7 +36,8 @@
 │   ├─ js/            calc.js（計算ロジック）ほか
 │   └─ icons/         アイコン PNG（180/192/512px）
 ├─ gas/               Apps Script のソース（Code.gs、appsscript.json）。clasp で GAS に押し上げる
-└─ tests/             計算ロジックのテスト（node --test で実行）
+└─ tests/             計算ロジックのテスト（npm test）
+    └─ e2e/           画面の通し確認（偽 GAS ＋ 手元の Edge。npm run test:e2e）。作業用の一時フォルダではなく必ずここに置く
 ```
 
 ## 作業の進め方（施主の希望）

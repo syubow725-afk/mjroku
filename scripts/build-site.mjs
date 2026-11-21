@@ -18,7 +18,9 @@ export function buildSite(env = process.env, outDir = 'app') {
       ? '環境変数 GAS_URL の形が違います（https://script.google.com/macros/s/…/exec）'
       : '環境変数 GAS_URL がありません（Cloudflare の Settings → Variables and Secrets で登録）');
   }
-  writeFileSync(join(outDir, 'site.json'), `${JSON.stringify({ gasUrl: url })}\n`);
+  // commit：どのコミットから作った公開か（Cloudflare が CF_PAGES_COMMIT_SHA で渡す）。公開の確認（check:pages）で使う
+  const commit = String(env.CF_PAGES_COMMIT_SHA || '').trim();
+  writeFileSync(join(outDir, 'site.json'), `${JSON.stringify({ gasUrl: url, commit })}\n`);
   return join(outDir, 'site.json');
 }
 
