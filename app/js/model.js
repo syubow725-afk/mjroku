@@ -455,6 +455,28 @@ export function sortPresets(rows) {
     || String(a.created_at || '').localeCompare(String(b.created_at || '')));
 }
 
+// 対局に保存したルールが、どのプリセットから作ったものか（rule_snapshot の id、なければ名前で探す）
+export function presetOfSession(presets, session) {
+  let id;
+  try { id = JSON.parse(session.rule_snapshot || '{}').id; } catch { id = undefined; }
+  return presets.find((p) => p.id === id) || presets.find((p) => p.name === session.rule_name) || null;
+}
+
+// 新しい対局で最初に選んでおくルール。
+//   1. 本アプリで作った直近の対局のルール（いつも同じルールで打つので引き継ぐ）
+//   2. このグループだけのルール（例：西川卓ルール）。本家から取り込んだ対局しかないグループでも、そのグループのルールから始める
+//   3. 直近の対局のルール　4. 先頭のルール
+// 本家から取り込んだ対局（作成者に「本家から取り込み」）は、ルールを仮に「いつものルール」にしてあるだけなので 1 では見ない
+export function defaultPreset(presets, sessions, groupId) {
+  const recent = [...sessions].sort((a, b) => b.date.localeCompare(a.date) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+  const imported = (s) => String(s.created_by || '').includes('本家から取り込み');
+  const fromApp = recent.find((s) => !imported(s));
+  return (fromApp && presetOfSession(presets, fromApp))
+    || presets.find((p) => p.group_id && p.group_id === groupId)
+    || (recent[0] && presetOfSession(presets, recent[0]))
+    || presets[0];
+}
+
 // 複製したときの名前。「〇〇のコピー」が既にあれば「〇〇のコピー2」…
 export function copyName(name, existingNames) {
   const used = new Set(existingNames);

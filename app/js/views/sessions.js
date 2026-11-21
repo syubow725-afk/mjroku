@@ -4,7 +4,7 @@ import { formatPt } from '../calc.js';
 import { getConfig, isConfigured } from '../config.js';
 import {
   buildSession, memberName, sessionChanges, ruleSnapshot, filterSessions, aggregate, sessionRule, recomputeScoreResults, effectiveCarryovers,
-  STANDARD_PRESET, presetRow, sortPresets,
+  STANDARD_PRESET, presetRow, sortPresets, presetOfSession, defaultPreset,
 } from '../model.js';
 import { addMember } from './members.js';
 import { ruleSettings } from './rule-settings.js';
@@ -158,16 +158,15 @@ export function sessionFormView(ctx, sessionId) {
   const base = existing || {
     date: todayStr(), title: '', memo: '',
     rate: latest?.rate ?? 50, chip_rate: latest?.chip_rate ?? 200, game_fee: latest?.game_fee ?? 0,
-    rule_name: latest?.rule_name,
   };
 
   // ルール：プリセットを選び、端数処理とウマ・オカを切り替える。編集時は対局に保存したルールから始める
   const presets = sortPresets(store.list('rules'));
   if (!presets.length) presets.push(STANDARD_PRESET);
-  const snapshotId = (() => {
-    try { return JSON.parse(base.rule_snapshot || '{}').id; } catch { return undefined; }
-  })();
-  const initialPreset = presets.find((p) => p.id === snapshotId) || presets.find((p) => p.name === base.rule_name) || presets[0];
+  // 編集はその対局のルール、新規は defaultPreset（直近の対局のルール、なければこのグループだけのルール）
+  const initialPreset = existing
+    ? presetOfSession(presets, existing) || presets[0]
+    : defaultPreset(presets, store.list('sessions'), store.group.id);
   const rules = ruleSettings({
     presets,
     initialPresetId: initialPreset.id,

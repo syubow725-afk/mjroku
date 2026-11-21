@@ -621,3 +621,26 @@ test('検算 3（10/02）：a から見た相手別が本家の相手別画面�
   assert.equal(rows[0].memberId, 'c');
   assert.equal(rows[rows.length - 1].memberId, 'e');
 });
+
+test('defaultPreset：新しい対局のルールは、本アプリで作った直近の対局のルール。なければこのグループだけのルール', async () => {
+  const { defaultPreset, presetOfSession } = await import('../app/js/model.js');
+  const std = { id: 'r_standard', name: 'いつものルール', group_id: '', created_at: '1' };
+  const ml = { id: 'r_mleague', name: 'Mリーグ', group_id: '', created_at: '2' };
+  const local = { id: 'r_local', name: '別の卓ルール', group_id: 'g_x', created_at: '3' };
+  const presets = [std, ml, local];
+  const snap = (id) => JSON.stringify({ id });
+  const imported = (date) => ({ id: `s_${date}`, date, rule_name: 'いつものルール', rule_snapshot: snap('r_standard'), created_by: 'A（本家から取り込み）' });
+
+  // 本家から取り込んだ対局しかないグループ：そのグループだけのルールから始める
+  assert.equal(defaultPreset(presets, [imported('2026-09-19'), imported('2026-09-05')], 'g_x').id, 'r_local');
+  // 本アプリで作った対局があれば、その（直近の）ルールを引き継ぐ。取り込んだ対局のほうが新しくても
+  const own = { id: 's_own', date: '2026-08-01', rule_name: 'Mリーグ', rule_snapshot: snap('r_mleague'), created_by: '入力係' };
+  assert.equal(defaultPreset(presets, [imported('2026-09-19'), own], 'g_x').id, 'r_mleague');
+  // グループだけのルールがないグループ：直近の対局のルール、それもなければ先頭
+  assert.equal(defaultPreset(presets, [imported('2026-09-19')], 'g_itsumo').id, 'r_standard');
+  assert.equal(defaultPreset(presets, [], 'g_itsumo').id, 'r_standard');
+  // 別のグループだけのルールは選ばない
+  assert.equal(defaultPreset(presets, [], 'g_other').id, 'r_standard');
+  // スナップショットが壊れていれば名前で探す
+  assert.equal(presetOfSession(presets, { rule_snapshot: '{', rule_name: 'Mリーグ' }).id, 'r_mleague');
+});
